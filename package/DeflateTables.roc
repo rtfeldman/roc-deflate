@@ -55,6 +55,11 @@ DeflateTables := [].{
 	first_len_sym : U64
 	first_len_sym = 257
 
+	## The literal symbols, 0-255, which are what the end-of-block symbol
+	## immediately follows.
+	num_literals : U64
+	num_literals = 256
+
 	num_litlen_syms : U64
 	num_litlen_syms = 288
 
