@@ -1,10 +1,15 @@
+import CompressFastest
+import CompressSmallest
+
 ## DEFLATE (RFC 1951) compression and decompression in pure Roc.
 ##
 ## `decompress` handles all three block types (stored, fixed Huffman, dynamic
 ## Huffman), so it can read streams produced by zlib, gzip, and ZIP tools.
-## `compress` emits a single fixed-Huffman block with hash-chain LZ77 and
-## lazy matching (zlib's deflate_slow strategy): readable by any inflate
-## implementation, with ratios approaching zlib's fixed-Huffman output.
+## `compress` picks its strategy from the level it is given: `Fastest` runs a
+## hash-table matchfinder in a single greedy pass, `Smallest` searches a binary
+## tree and finds the cheapest path through the matches under a cost model it
+## refines over several passes, and `Balanced` uses hash-chain LZ77 with lazy
+## matching. All three produce streams any inflate implementation can read.
 
 ## Errors that can occur when decompressing a DEFLATE stream.
 DeflateError : [
@@ -21,16 +26,18 @@ Deflate := [].{
 
 	## Compress bytes into a raw DEFLATE stream.
 	compress : List(U8), Level -> List(U8)
-	compress = |input, level| {
-		# Match-search tuning per level, in the spirit of zlib's configuration
-		# table: chain candidates to try per position, the deferred-match
-		# length that skips the lazy search, and the match length that stops
-		# a search early.
-		{ max_chain, max_lazy, nice_match } = match level {
-			Fastest => { max_chain: 4, max_lazy: 4, nice_match: 8 }
-			Balanced => { max_chain: 32, max_lazy: 16, nice_match: 128 }
-			Smallest => { max_chain: 1024, max_lazy: 258, nice_match: 258 }
-		}
+	compress = |input, level| match level {
+		Fastest => CompressFastest.compress(input)
+		Smallest => CompressSmallest.compress(input)
+		Balanced => Deflate.compress_balanced(input)
+	}
+
+	compress_balanced : List(U8) -> List(U8)
+	compress_balanced = |input| {
+		# Match-search tuning in the spirit of zlib's configuration table:
+		# chain candidates to try per position, the deferred-match length that
+		# skips the lazy search, and the match length that stops a search early.
+		{ max_chain, max_lazy, nice_match } = { max_chain: 32, max_lazy: 16, nice_match: 128 }
 		# Read the module-level tables once and precompute packed emit codes:
 		# in the interpreter, every access to a top-level list constant
 		# re-materializes the list, so hot paths must not touch them.
