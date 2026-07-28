@@ -39,6 +39,15 @@ BlockSplit := [].{
 		num_new_observations: 0,
 	}
 
+	## Drop what the finished block accumulated while keeping what is still
+	## pending, which belongs to the block that follows it.
+	clear_old : Stats -> Stats
+	clear_old = |stats| {
+		..stats,
+		observations: List.repeat(0.U32, BlockSplit.num_types),
+		num_observations: 0,
+	}
+
 	## Bucket a literal by two high bits and one low bit. Cheap, and enough to
 	## separate text from binary from structured data.
 	observe_literal : Stats, U8 -> Stats

@@ -27,12 +27,17 @@ MinCostPath := [].{
 
 	## Find the cheapest encoding of the block.
 	##
-	## Returns one item per position; positions covered by a match hold the
-	## match at its start and are skipped over when walking forward.
-	find : List(Cached), U64, CostModel.Costs -> List(Item)
+	## Returns one item per position -- positions covered by a match hold the
+	## match at its start and are skipped over when walking forward -- along
+	## with what the whole path costs, in sixteenths of a bit.
+	find : List(Cached), U64, CostModel.Costs -> { items : List(Item), cost : U64 }
 	find = |cache, block_length, costs| {
 		# cost_to_end[i] is the cost of encoding everything from position i on.
-		var $cost_to_end = List.repeat(0.U64, block_length + 1)
+		# Positions past the end of the block are priced prohibitively rather
+		# than being absent: a cached match may run past the block boundary,
+		# and it has to be representable in order to be rejected.
+		var $cost_to_end = List.repeat(0x80000000.U64, block_length + CostModel.max_match_len + 1)
+		$cost_to_end = List.set($cost_to_end, block_length, 0) ?? $cost_to_end
 		var $items = List.repeat({ length: 1, offset: 0 }, block_length + 1)
 
 		var $node = block_length
@@ -83,7 +88,7 @@ MinCostPath := [].{
 			$items = List.set($items, $node, $best_item) ?? $items
 		}
 
-		$items
+		{ items: $items, cost: List.get($cost_to_end, 0) ?? 0 }
 	}
 
 	## Count the symbols the chosen path emits, which become the frequencies the
