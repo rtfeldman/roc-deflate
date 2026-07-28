@@ -11,8 +11,8 @@ implementations, timed on the same bytes under the same protocol.
   it through its streaming interface in `N`-byte windows, so the cost of
   streaming is measured rather than assumed.
 
-Both are built as static libraries at `-O2` (matching the compiler settings
-roc-deflate is compared under), with zlib-ng in its native-API mode
+Both are built as static libraries at `-O3`, which is what `--opt=speed`
+gives the Roc side, with zlib-ng in its native-API mode
 (`ZLIB_COMPAT=OFF`) so its symbols cannot collide with the platform zlib and
 leave you benchmarking the wrong library.
 
@@ -127,6 +127,27 @@ the protocol above produces, so a passing result does not flap between runs.
 deterministic — it has no run-to-run noise at all — so this one is not a noise
 band but a policy choice: it is the margin by which two different algorithms are
 called equivalent. Tighten it toward zero for a stricter bar.
+
+### Decompression is not comparable yet
+
+The decompression rows do not currently support a verdict, for two reasons.
+
+Ratio is not a property of decompression at all. A decoder is handed a stream
+whose size is already fixed and either reproduces the original bytes or does
+not, so the ratio shown on a `decomp` row is just the stream it was given,
+echoing the `compress` row above it.
+
+Worse, each side is measured on a *different* stream: roc-deflate decompresses
+its own output and libdeflate decompresses its own. Those differ in size and in
+kind -- roc-deflate emits fixed-Huffman blocks, libdeflate emits dynamic ones,
+and building code tables is work a fixed-Huffman stream never asks for. So the
+throughput numbers are not measuring the same job.
+
+Making this meaningful needs one canonical stream per (file, setting), produced
+by a single reference encoder, with every decoder timed on those identical
+bytes. That means `cbench` writing the streams out and both harnesses reading
+them. Until that exists, read the `decomp` rows as "each decoder on its own
+output" and not as a comparison.
 
 ### TSV schema
 

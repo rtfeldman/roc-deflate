@@ -15,7 +15,8 @@ build="$here/.build"
 libdeflate_src="${LIBDEFLATE_SRC:-$here/../../../libdeflate}"
 zlibng_src="${ZLIBNG_SRC:-$here/../../../zlib-ng}"
 cc="${CC:-cc}"
-opt="${OPT_FLAGS:--O2}"
+# -O3 to match what --opt=speed gives the Roc side.
+opt="${OPT_FLAGS:--O3}"
 
 for src in "$libdeflate_src" "$zlibng_src"; do
 	if [ ! -d "$src" ]; then
