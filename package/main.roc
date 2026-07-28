@@ -1,1 +1,1 @@
-package [Deflate] {}
+package [Deflate, Huffman, Precode, DeflateTables, BitWriter, Block] {}
