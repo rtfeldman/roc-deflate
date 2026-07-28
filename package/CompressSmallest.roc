@@ -293,7 +293,10 @@ CompressSmallest := [].{
 					while $skip > 0 {
 						skip_lens = CompressSmallest.adjusted_lens(data_len - $pos)
 						if skip_lens.max_len >= BtMatchfinder.required_nbytes {
-							r = BtMatchfinder.advance($st.finder, data, $pos, skip_lens.max_len, skip_lens.nice_len, CompressSmallest.max_search_depth, $st.next3, $st.next4, False)
+							# Skipping only maintains the tree, so it never
+							# extends a comparison past what would have been
+							# good enough to stop at.
+							r = BtMatchfinder.advance($st.finder, data, $pos, skip_lens.nice_len, skip_lens.nice_len, CompressSmallest.max_search_depth, $st.next3, $st.next4, False)
 							$st = { ..$st, finder: r.finder, next3: r.next3, next4: r.next4 }
 						} else {
 						}
