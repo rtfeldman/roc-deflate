@@ -32,6 +32,9 @@ CostModel := [].{
 	max_match_len : U64
 	max_match_len = 258
 
+	## A match the finder offered: how far back and how long.
+	Match : { length : U64, offset : U64 }
+
 	## `literal` is indexed by byte, `length` by match length, `offset_slot` by
 	## slot.
 	Costs : { literal : List(U32), length : List(U32), offset_slot : List(U32) }
