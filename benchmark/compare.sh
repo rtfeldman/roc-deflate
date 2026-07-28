@@ -86,33 +86,40 @@ awk -v roc_file="${files[0]}" -v c_file="${files[1]}" \
 		if (setting == "-" || setting == "")
 			next
 
-		# Summing two engines into one bucket would produce a meaningless blend,
-		# so track which appear and make the caller choose if there is a choice.
-		if (c_engine) {
-			if (want_engine != "" && $c_engine != want_engine)
-				next
-			engines[side SUBSEP $c_engine] = 1
-		}
-
-		key = side SUBSEP setting SUBSEP $c_op
+		# Bucket by engine as well, and resolve which engine each side means
+		# once everything is read. Filtering while reading would apply the
+		# requested engine to both inputs, dropping every row from the side that
+		# never had more than one engine to begin with.
+		engine = c_engine ? $c_engine : "-"
+		key = side SUBSEP engine SUBSEP setting SUBSEP $c_op
 		orig[key] += $c_orig
 		comp[key] += $c_comp
 		ns[key]   += $c_ns
+		engines[side SUBSEP engine] = 1
 	}
 
 	END {
 		if (aborted)
 			exit 2
 
+		# Pick the engine for each side independently: the only one it has, or
+		# the requested one when it has several.
 		for (k in engines) {
 			split(k, parts, SUBSEP)
 			n[parts[1]]++
 			names[parts[1]] = (names[parts[1]] == "") ? parts[2] : names[parts[1]] " " parts[2]
+			if (want_engine != "" && parts[2] == want_engine)
+				chosen[parts[1]] = parts[2]
+			else if (n[parts[1]] == 1)
+				only[parts[1]] = parts[2]
 		}
-		for (s in n)
-			if (n[s] > 1)
+		for (s in n) {
+			if (n[s] == 1)
+				chosen[s] = only[s]
+			else if (!(s in chosen))
 				fail("the " s " input mixes engines (" names[s] "); " \
 				     "pass --engine=NAME to pick one")
+		}
 
 		settings[1] = "fastest"; settings[2] = "balanced"; settings[3] = "smallest"
 		ops[1] = "compress"; ops[2] = "decomp"
@@ -128,8 +135,8 @@ awk -v roc_file="${files[0]}" -v c_file="${files[1]}" \
 		for (s = 1; s <= 3; s++) {
 			for (o = 1; o <= 2; o++) {
 				setting = settings[s]; op = ops[o]
-				rk = "roc" SUBSEP setting SUBSEP op
-				ck = "c" SUBSEP setting SUBSEP op
+				rk = "roc" SUBSEP chosen["roc"] SUBSEP setting SUBSEP op
+				ck = "c" SUBSEP chosen["c"] SUBSEP setting SUBSEP op
 
 				if (!(rk in orig) || !(ck in orig)) {
 					which = (rk in orig) ? "c" : ((ck in orig) ? "roc" : "both")
