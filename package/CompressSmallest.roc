@@ -49,6 +49,13 @@ CompressSmallest := [].{
 	min_match_len : U64
 	min_match_len = 3
 
+	## How many cached matches a block may hold. Match-rich data reaches this
+	## before it reaches the block length limit, and the block ends there:
+	## every pass walks the whole cache, so its size is what the repeated
+	## searching costs.
+	match_cache_length : U64
+	match_cache_length = 5 * CompressSmallest.soft_max_block_length
+
 	## Inputs this small skip compression entirely: `55 - level * 4` at level 12.
 	max_passthrough_size : U64
 	max_passthrough_size = 7
@@ -221,6 +228,15 @@ CompressSmallest := [].{
 				CompressSmallest.calculate_min_match_len(data, $block_begin, max_block_end - $block_begin)
 			}
 
+			# Whatever was carried over from the previous block already
+			# occupies the cache.
+			var $cache_entries = 0.U64
+			var $c = 0.U64
+			while $c < List.len($cache) {
+				$cache_entries = $cache_entries + List.len((List.get($cache, $c) ?? { matches: [], literal: 0 }).matches) + 1
+				$c = $c + 1
+			}
+
 			var $prev_check = 0.U64
 			var $have_prev_check = False
 			var $change_detected = False
@@ -263,6 +279,9 @@ CompressSmallest := [].{
 				} else {
 				}
 
+				# Each position costs one cache slot per match it recorded, plus
+				# one for the position itself.
+				$cache_entries = $cache_entries + List.len(matches) + 1
 				$cache = List.append($cache, { matches, literal: List.get(data, $pos) ?? 0 })
 				$pos = $pos + 1
 
@@ -278,6 +297,7 @@ CompressSmallest := [].{
 							$st = { ..$st, finder: r.finder, next3: r.next3, next4: r.next4 }
 						} else {
 						}
+						$cache_entries = $cache_entries + 1
 						$cache = List.append($cache, { matches: [], literal: List.get(data, $pos) ?? 0 })
 						$pos = $pos + 1
 						$skip = $skip - 1
@@ -286,6 +306,8 @@ CompressSmallest := [].{
 				}
 
 				if $pos >= max_block_end {
+					$scanning = False
+				} else if $cache_entries >= CompressSmallest.match_cache_length {
 					$scanning = False
 				} else if BlockSplit.ready($st.split, $block_begin, $pos, data_len) {
 					decision = BlockSplit.should_end($st.split, $block_begin, $pos, data_len)
