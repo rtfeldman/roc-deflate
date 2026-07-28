@@ -34,11 +34,22 @@ Block := [].{
 		offset: List.repeat(0.U32, DeflateTables.num_offset_syms),
 	}
 
+	## The format permits codewords up to 15 bits, but literal/length codewords
+	## are held to 14. The bound costs almost nothing -- a symbol that wanted 15
+	## bits is rare by construction -- and it lets a decoder cover a
+	## literal/length codeword and the extra bits that follow it within a single
+	## machine word.
+	max_litlen_codeword_len : U64
+	max_litlen_codeword_len = 14
+
+	max_offset_codeword_len : U64
+	max_offset_codeword_len = 15
+
 	## Build the dynamic codes for these frequencies.
 	build_codes : Freqs -> Codes
 	build_codes = |freqs| {
-		litlen = Huffman.build(freqs.litlen, 15)
-		offset = Huffman.build(freqs.offset, 15)
+		litlen = Huffman.build(freqs.litlen, Block.max_litlen_codeword_len)
+		offset = Huffman.build(freqs.offset, Block.max_offset_codeword_len)
 		{
 			litlen_lens: litlen.lengths,
 			litlen_codewords: litlen.codewords,
