@@ -40,3 +40,33 @@ expect BlockTest.round_trips([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 expect BlockTest.round_trips([])
 expect BlockTest.round_trips([42])
 
+
+# Literal/length codewords stay within the bound the encoder builds to, which
+# is one below what the format permits. Only skewed frequencies reach it, so
+# building to the format's limit instead goes unnoticed on ordinary data: the
+# code that wants a 15-bit codeword takes a different shape, and the header
+# describing it changes with it.
+expect {
+	# Fibonacci frequencies are the classic worst case for code depth -- each
+	# symbol is as rare as the two before it combined, so the tree grows one
+	# level per symbol until the bound stops it.
+	var $litlen = List.repeat(0.U32, DeflateTables.num_litlen_syms)
+	var $prev = 1.U32
+	var $cur = 1.U32
+	var $i = 0.U64
+	while $i < 20 {
+		$litlen = List.set($litlen, $i, $cur) ?? $litlen
+		next = $prev + $cur
+		$prev = $cur
+		$cur = next
+		$i = $i + 1
+	}
+	codes = Block.build_codes({ litlen: $litlen, offset: List.repeat(0.U32, DeflateTables.num_offset_syms) })
+	var $longest = 0.U8
+	var $k = 0.U64
+	while $k < List.len(codes.litlen_lens) {
+		$longest = $longest.max(List.get(codes.litlen_lens, $k) ?? 0)
+		$k = $k + 1
+	}
+	$longest == 14
+}
