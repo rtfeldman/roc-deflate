@@ -280,7 +280,10 @@ Inflate := [].{
 		var $sym = 0.U64
 		while $sym < num_syms {
 			len = (List.get(lens, $sym) ?? 0).to_u64()
-			$len_counts = List.set($len_counts, len, (List.get($len_counts, len) ?? 0) + 1) ?? $len_counts
+			$len_counts = match List.set($len_counts, len, (List.get($len_counts, len) ?? 0) + 1) {
+				Ok(set_len_counts) => set_len_counts
+				Err(_) => return Err(CorruptData)
+			}
 			$sym = $sym + 1
 		}
 
@@ -297,13 +300,19 @@ Inflate := [].{
 		# Sort symbols by codeword length, then symbol value, via a counting
 		# sort, computing the used codespace in the same pass.
 		var $offsets = List.repeat(0.U64, $max_codeword_len + 2)
-		$offsets = List.set($offsets, 1, List.get($len_counts, 0) ?? 0) ?? $offsets
+		$offsets = match List.set($offsets, 1, List.get($len_counts, 0) ?? 0) {
+			Ok(set_offsets) => set_offsets
+			Err(_) => return Err(CorruptData)
+		}
 		var $codespace_used = 0.U64
 		var $len = 1.U64
 		while $len < $max_codeword_len {
 			prev = List.get($offsets, $len) ?? 0
 			count = List.get($len_counts, $len) ?? 0
-			$offsets = List.set($offsets, $len + 1, prev + count) ?? $offsets
+			$offsets = match List.set($offsets, $len + 1, prev + count) {
+				Ok(set_offsets) => set_offsets
+				Err(_) => return Err(CorruptData)
+			}
 			$codespace_used = $codespace_used.shl_wrap(1) + count
 			$len = $len + 1
 		}
@@ -314,8 +323,14 @@ Inflate := [].{
 		while $sym < num_syms {
 			len = (List.get(lens, $sym) ?? 0).to_u64()
 			slot = List.get($offsets, len) ?? 0
-			$sorted_syms = List.set($sorted_syms, slot, $sym.to_u16_wrap()) ?? $sorted_syms
-			$offsets = List.set($offsets, len, slot + 1) ?? $offsets
+			$sorted_syms = match List.set($sorted_syms, slot, $sym.to_u16_wrap()) {
+				Ok(set_sorted_syms) => set_sorted_syms
+				Err(_) => return Err(CorruptData)
+			}
+			$offsets = match List.set($offsets, len, slot + 1) {
+				Ok(set_offsets) => set_offsets
+				Err(_) => return Err(CorruptData)
+			}
 			$sym = $sym + 1
 		}
 		# Index of the first used symbol; everything before it has length 0.
@@ -370,7 +385,10 @@ Inflate := [].{
 			while $count > 0 {
 				sym2 = (List.get($sorted_syms, $sorted_index) ?? 0).to_u64()
 				$sorted_index = $sorted_index + 1
-				$table = List.set($table, $codeword, Inflate.make_entry(decode_results, sym2, $len.to_u32_wrap())) ?? $table
+				$table = match List.set($table, $codeword, Inflate.make_entry(decode_results, sym2, $len.to_u32_wrap())) {
+					Ok(set_table) => set_table
+					Err(_) => return Err(CorruptData)
+				}
 
 				if $codeword == $cur_table_end - 1 {
 					# Last codeword (all ones): finish doubling out to the
@@ -378,7 +396,10 @@ Inflate := [].{
 					while $len < table_bits {
 						var $j = 0.U64
 						while $j < $cur_table_end {
-							$table = List.set($table, $cur_table_end + $j, List.get($table, $j) ?? 0) ?? $table
+							$table = match List.set($table, $cur_table_end + $j, List.get($table, $j) ?? 0) {
+								Ok(set_table) => set_table
+								Err(_) => return Err(CorruptData)
+							}
 							$j = $j + 1
 						}
 						$cur_table_end = $cur_table_end.shl_wrap(1)
@@ -401,7 +422,10 @@ Inflate := [].{
 				if $len <= table_bits {
 					var $j = 0.U64
 					while $j < $cur_table_end {
-						$table = List.set($table, $cur_table_end + $j, List.get($table, $j) ?? 0) ?? $table
+						$table = match List.set($table, $cur_table_end + $j, List.get($table, $j) ?? 0) {
+							Ok(set_table) => set_table
+							Err(_) => return Err(CorruptData)
+						}
 						$j = $j + 1
 					}
 					$cur_table_end = $cur_table_end.shl_wrap(1)
@@ -440,7 +464,10 @@ Inflate := [].{
 					.bitwise_or(Inflate.huffdec_subtable_pointer)
 					.bitwise_or($subtable_bits.to_u32_wrap().shl_wrap(8))
 					.bitwise_or(table_bits.to_u32_wrap())
-				$table = List.set($table, $subtable_prefix, pointer) ?? $table
+				$table = match List.set($table, $subtable_prefix, pointer) {
+					Ok(set_table) => set_table
+					Err(_) => return Err(CorruptData)
+				}
 			} else {}
 
 			sym3 = (List.get($sorted_syms, $sorted_index) ?? 0).to_u64()
@@ -449,7 +476,10 @@ Inflate := [].{
 			var $i2 = $subtable_start + $codeword.shr_zf_wrap(table_bits.to_u8_wrap())
 			stride = 1.U64.shl_wrap(($len - table_bits).to_u8_wrap())
 			while $i2 < $cur_table_end {
-				$table = List.set($table, $i2, entry) ?? $table
+				$table = match List.set($table, $i2, entry) {
+					Ok(set_table) => set_table
+					Err(_) => return Err(CorruptData)
+				}
 				$i2 = $i2 + stride
 			}
 
@@ -531,7 +561,10 @@ Inflate := [].{
 		# maximum 19, so the first length is taken from the header refill.
 		var $precode_lens = List.repeat(0.U8, 19)
 		first_slot = (List.get(Inflate.precode_lens_permutation, 0) ?? 0).to_u64()
-		$precode_lens = List.set($precode_lens, first_slot, bitbuf0.shr_zf_wrap(17).bitwise_and(7).to_u8_wrap()) ?? $precode_lens
+		$precode_lens = match List.set($precode_lens, first_slot, bitbuf0.shr_zf_wrap(17).bitwise_and(7).to_u8_wrap()) {
+			Ok(set_precode_lens) => set_precode_lens
+			Err(_) => return Err(CorruptData)
+		}
 
 		r1 = Inflate.refill(input, in_next0, bitbuf0.shr_zf_wrap(20), bitsleft0 - 20, overread0)?
 		var $in_next = r1.in_next
@@ -542,7 +575,10 @@ Inflate := [].{
 		var $i = 1.U64
 		while $i < num_explicit_precode_lens {
 			slot = (List.get(Inflate.precode_lens_permutation, $i) ?? 0).to_u64()
-			$precode_lens = List.set($precode_lens, slot, $bitbuf.bitwise_and(7).to_u8_wrap()) ?? $precode_lens
+			$precode_lens = match List.set($precode_lens, slot, $bitbuf.bitwise_and(7).to_u8_wrap()) {
+				Ok(set_precode_lens) => set_precode_lens
+				Err(_) => return Err(CorruptData)
+			}
 			$bitbuf = $bitbuf.shr_zf_wrap(3)
 			$bitsleft = $bitsleft - 3
 			$i = $i + 1
@@ -581,7 +617,10 @@ Inflate := [].{
 			presym = entry.shr_zf_wrap(16).to_u64()
 
 			if presym < 16 {
-				$lens = List.set($lens, $n, presym.to_u8_wrap()) ?? $lens
+				$lens = match List.set($lens, $n, presym.to_u8_wrap()) {
+					Ok(set_lens) => set_lens
+					Err(_) => return Err(CorruptData)
+				}
 				$n = $n + 1
 			} else if presym == 16 {
 				# Repeat the previous length 3-6 times.
@@ -594,7 +633,10 @@ Inflate := [].{
 				$bitsleft = $bitsleft - 2
 				var $r = 0.U64
 				while $r < rep_count {
-					$lens = List.set($lens, $n + $r, rep_val) ?? $lens
+					$lens = match List.set($lens, $n + $r, rep_val) {
+						Ok(set_lens) => set_lens
+						Err(_) => return Err(CorruptData)
+					}
 					$r = $r + 1
 				}
 				$n = $n + rep_count
@@ -716,7 +758,10 @@ Inflate := [].{
 				# output; reading through freshly appended bytes is what
 				# makes an overlapping range repeat, exactly the copy
 				# `append_range_within` performs.
-				$out = List.append_range_within($out, out_len - offset, length) ?? $out
+				$out = match List.append_range_within($out, out_len - offset, length) {
+					Ok(new_out) => new_out
+					Err(_) => return Err(CorruptData)
+				}
 			}
 		}
 
