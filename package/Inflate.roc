@@ -712,21 +712,18 @@ Inflate := [].{
 					return Err(CorruptData)
 				} else {}
 
-				# Copy the match, split as libdeflate does: runs of one byte,
-				# non-overlapping ranges in bulk, and short overlapping
-				# ranges byte by byte.
-				if offset == 1 {
-					byte = List.get($out, out_len - 1) ?? 0
-					$out = List.concat($out, List.repeat(byte, length))
-				} else if offset >= length {
-					$out = List.concat($out, List.sublist($out, { start: out_len - offset, len: length }))
-				} else {
-					var $k = 0.U64
-					while $k < length {
-						byte = List.get($out, List.len($out) - offset) ?? 0
-						$out = List.append($out, byte)
-						$k = $k + 1
-					}
+				# Copy the match byte by byte, like the template's generic
+				# loop. Reading `offset` bytes back as the output grows
+				# handles overlapping ranges (runs) naturally. Appends stay
+				# in place; a bulk self-copy through `List.concat` would
+				# reallocate the whole output per match.
+				var $k = 0.U64
+				var $src = out_len - offset
+				while $k < length {
+					byte = List.get($out, $src) ?? 0
+					$out = List.append($out, byte)
+					$src = $src + 1
+					$k = $k + 1
 				}
 			}
 		}
