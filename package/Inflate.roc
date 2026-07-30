@@ -68,7 +68,7 @@ Inflate := [].{
 				if in_len < $in_next + len {
 					return Err(UnexpectedEnd)
 				} else {}
-				$out = List.concat($out, List.sublist(input, { start: $in_next, len }))
+				$out = List.append_sublist($out, input, { start: $in_next, len })
 				$in_next = $in_next + len
 			} else if block_type <= 2 {
 				tables =
@@ -712,19 +712,11 @@ Inflate := [].{
 					return Err(CorruptData)
 				} else {}
 
-				# Copy the match byte by byte, like the template's generic
-				# loop. Reading `offset` bytes back as the output grows
-				# handles overlapping ranges (runs) naturally. Appends stay
-				# in place; a bulk self-copy through `List.concat` would
-				# reallocate the whole output per match.
-				var $k = 0.U64
-				var $src = out_len - offset
-				while $k < length {
-					byte = List.get($out, $src) ?? 0
-					$out = List.append($out, byte)
-					$src = $src + 1
-					$k = $k + 1
-				}
+				# The match is `length` bytes starting `offset` back in the
+				# output; reading through freshly appended bytes is what
+				# makes an overlapping range repeat, exactly the copy
+				# `append_range_within` performs.
+				$out = List.append_range_within($out, out_len - offset, length) ?? $out
 			}
 		}
 
