@@ -28,6 +28,14 @@ Inflate := [].{
 		var $overread = 0.U64
 		var $more_blocks = True
 
+		# The two big decode tables are built fresh for every block but into
+		# the same allocations, which round-trip through build_block_tables
+		# and inflate_block back here. Rebuilding writes every entry a decode
+		# can read, so the leftover entries never need clearing.
+		var $litlen_scratch = List.repeat(0.U32, Inflate.litlen_enough)
+		var $offset_scratch = List.repeat(0.U32, Inflate.offset_enough)
+
+
 		while $more_blocks {
 			r0 = Inflate.refill(input, $in_next, $bitbuf, $bitsleft, $overread)?
 			$in_next = r0.in_next
@@ -80,7 +88,7 @@ Inflate := [].{
 						$bitbuf = header.bitbuf
 						$bitsleft = header.bitsleft
 						$overread = header.overread
-						Inflate.build_block_tables(header.lens, header.num_litlen_syms, header.num_offset_syms)?
+						Inflate.build_block_tables(header.lens, header.num_litlen_syms, header.num_offset_syms, $litlen_scratch, $offset_scratch)?
 					} else {
 						# Static Huffman block: the fixed code lengths from
 						# RFC 1951 section 3.2.6.
@@ -91,7 +99,7 @@ Inflate := [].{
 							.concat(List.repeat(7.U8, 24))
 							.concat(List.repeat(8.U8, 8))
 							.concat(List.repeat(5.U8, 32))
-						Inflate.build_block_tables(lens, 288, 32)?
+						Inflate.build_block_tables(lens, 288, 32, $litlen_scratch, $offset_scratch)?
 					}
 
 				decoded = Inflate.inflate_block(input, $in_next, $bitbuf, $bitsleft, $overread, $out, tables)?
@@ -100,6 +108,8 @@ Inflate := [].{
 				$bitsleft = decoded.bitsleft
 				$overread = decoded.overread
 				$out = decoded.out
+				$litlen_scratch = decoded.litlen
+				$offset_scratch = decoded.offset
 			} else {
 				return Err(CorruptData)
 			}
@@ -204,8 +214,8 @@ Inflate := [].{
 	offset_enough = 402
 
 	## The static decode-result half of each precode table entry.
-	precode_decode_results : {} -> List(U32)
-	precode_decode_results = |{}| {
+	precode_decode_results : List(U32)
+	precode_decode_results = {
 		var $results = List.with_capacity(19.U64)
 		var $sym = 0.U32
 		while $sym < 19 {
@@ -218,8 +228,8 @@ Inflate := [].{
 	## The static decode-result half of each litlen table entry: 256 literals,
 	## end-of-block, then the 29 length slots (the last one repeated for the
 	## two reserved symbols, as libdeflate does).
-	litlen_decode_results : {} -> List(U32)
-	litlen_decode_results = |{}| {
+	litlen_decode_results : List(U32)
+	litlen_decode_results = {
 		var $results = List.with_capacity(288.U64)
 		var $lit = 0.U32
 		while $lit < 256 {
@@ -242,8 +252,8 @@ Inflate := [].{
 
 	## The static decode-result half of each offset table entry: the 30 offset
 	## slots, the last repeated for the two reserved symbols.
-	offset_decode_results : {} -> List(U32)
-	offset_decode_results = |{}| {
+	offset_decode_results : List(U32)
+	offset_decode_results = {
 		bases = DeflateTables.offset_slot_base
 		extras = DeflateTables.extra_offset_bits
 		var $results = List.with_capacity(32.U64)
@@ -273,8 +283,13 @@ Inflate := [].{
 	## When `dynamic_table_bits` is set, `table_bits` is treated as a maximum
 	## and reduced to the longest codeword length actually used (libdeflate
 	## does this for the litlen table only).
-	build_decode_table : List(U8), U64, List(U32), U64, U64, U64, Bool -> Try(BuiltTable, [CorruptData, UnexpectedEnd])
-	build_decode_table = |lens, num_syms, decode_results, max_table_bits, max_codeword_len_limit, enough, dynamic_table_bits| {
+	##
+	## `scratch` supplies the table's backing storage, sized `enough` for the
+	## code by its caller; every entry a decode can reach is written before
+	## the table is returned, so a previous block's table can be passed back
+	## in as it stands.
+	build_decode_table : List(U8), U64, List(U32), U64, U64, Bool, List(U32) -> Try(BuiltTable, [CorruptData, UnexpectedEnd])
+	build_decode_table = |lens, num_syms, decode_results, max_table_bits, max_codeword_len_limit, dynamic_table_bits, scratch| {
 		# Count codewords of each length, including length 0.
 		var $len_counts = List.repeat(0.U64, max_codeword_len_limit + 1)
 		var $sym = 0.U64
@@ -355,11 +370,14 @@ Inflate := [].{
 					(List.get($sorted_syms, first_used) ?? 0).to_u64()
 				}
 			entry = Inflate.make_entry(decode_results, single_sym, 1)
-			var $table0 = List.with_capacity(enough)
+			var $table0 = scratch
 			var $i = 0.U64
 			table_len = 1.U64.shl_wrap(table_bits.to_u8_wrap())
 			while $i < table_len {
-				$table0 = List.append($table0, entry)
+				$table0 = match List.set($table0, $i, entry) {
+					Ok(set_table0) => set_table0
+					Err(_) => return Err(CorruptData)
+				}
 				$i = $i + 1
 			}
 			return Ok({ table: $table0, table_bits })
@@ -368,7 +386,7 @@ Inflate := [].{
 		# The code is complete: enumerate codewords in lexicographic order,
 		# filling direct entries with incremental table doubling, then the
 		# subtables for codewords longer than `table_bits`.
-		var $table = List.repeat(0.U32, enough)
+		var $table = scratch
 		var $sorted_index = first_used
 		var $codeword = 0.U64
 		$len = 1
@@ -504,26 +522,28 @@ Inflate := [].{
 
 	## Build the litlen and offset decode tables for one block's code lengths,
 	## where `lens` holds the litlen lengths followed by the offset lengths.
-	build_block_tables : List(U8), U64, U64 -> Try(BlockTables, [CorruptData, UnexpectedEnd])
-	build_block_tables = |lens, num_litlen_syms, num_offset_syms| {
+	## The scratch lists supply the tables' backing storage, and the
+	## decode-result halves are built once per stream by the caller.
+	build_block_tables : List(U8), U64, U64, List(U32), List(U32) -> Try(BlockTables, [CorruptData, UnexpectedEnd])
+	build_block_tables = |lens, num_litlen_syms, num_offset_syms, litlen_scratch, offset_scratch| {
 		offset_lens = List.sublist(lens, { start: num_litlen_syms, len: num_offset_syms })
 		offset_built = Inflate.build_decode_table(
 			offset_lens,
 			num_offset_syms,
-			Inflate.offset_decode_results({}),
+			Inflate.offset_decode_results,
 			Inflate.offset_tablebits,
 			15,
-			Inflate.offset_enough,
 			False,
+			offset_scratch,
 		)?
 		litlen_built = Inflate.build_decode_table(
 			List.sublist(lens, { start: 0, len: num_litlen_syms }),
 			num_litlen_syms,
-			Inflate.litlen_decode_results({}),
+			Inflate.litlen_decode_results,
 			Inflate.litlen_tablebits,
 			15,
-			Inflate.litlen_enough,
 			True,
+			litlen_scratch,
 		)?
 		Ok({
 			litlen: litlen_built.table,
@@ -587,11 +607,11 @@ Inflate := [].{
 		precode_built = Inflate.build_decode_table(
 			$precode_lens,
 			19,
-			Inflate.precode_decode_results({}),
+			Inflate.precode_decode_results,
 			Inflate.precode_tablebits,
 			7,
-			Inflate.precode_enough,
 			False,
+			List.repeat(0.U32, Inflate.precode_enough),
 		)?
 		precode_table = precode_built.table
 
@@ -670,7 +690,15 @@ Inflate := [].{
 		})
 	}
 
-	InflateResult : { in_next : U64, bitbuf : U64, bitsleft : U64, overread : U64, out : List(U8) }
+	InflateResult : {
+		in_next : U64,
+		bitbuf : U64,
+		bitsleft : U64,
+		overread : U64,
+		out : List(U8),
+		litlen : List(U32),
+		offset : List(U32),
+	}
 
 	## Decode one Huffman block's symbols into the output. Ported from the
 	## template's generic loop: one refill per iteration covers the longest
@@ -765,6 +793,14 @@ Inflate := [].{
 			}
 		}
 
-		Ok({ in_next: $in_next, bitbuf: $bitbuf, bitsleft: $bitsleft, overread: $overread, out: $out })
+		Ok({
+			in_next: $in_next,
+			bitbuf: $bitbuf,
+			bitsleft: $bitsleft,
+			overread: $overread,
+			out: $out,
+			litlen: litlen_table,
+			offset: offset_table,
+		})
 	}
 }
