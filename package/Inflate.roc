@@ -719,7 +719,9 @@ Inflate := [].{
 		var $done = 0.U64
 
 		# ── Fast loop ── decode several symbols per unguarded word refill.
-		while $done == 0 and $in_next + 8 <= in_len {
+		# The 16-byte margin covers both refills an iteration can perform:
+		# each advances the cursor by at most seven bytes.
+		while $done == 0 and $in_next + 16 <= in_len {
 			word = U64.from_le_bytes(input, $in_next) ?? 0
 			$bitbuf = $bitbuf.bitwise_or(word.shl_wrap($bitsleft.to_u8_wrap()))
 			$in_next = $in_next + 7 - $bitsleft.shr_zf_wrap(3).bitwise_and(7)
@@ -790,11 +792,10 @@ Inflate := [].{
 						+ $saved_bitbuf.bitwise_and(len_mask).shr_zf_wrap(len_codeword_bits)
 
 					if $bitsleft < 28 {
-						rf = Inflate.refill(input, $in_next, $bitbuf, $bitsleft, $overread)?
-						$in_next = rf.in_next
-						$bitbuf = rf.bitbuf
-						$bitsleft = rf.bitsleft
-						$overread = rf.overread
+						word_r = U64.from_le_bytes(input, $in_next) ?? 0
+						$bitbuf = $bitbuf.bitwise_or(word_r.shl_wrap($bitsleft.to_u8_wrap()))
+						$in_next = $in_next + 7 - $bitsleft.shr_zf_wrap(3).bitwise_and(7)
+						$bitsleft = $bitsleft.bitwise_or(56)
 					} else {}
 
 					var $off_entry = (List.get(offset_table, $bitbuf.bitwise_and(255)) ?? 0)
