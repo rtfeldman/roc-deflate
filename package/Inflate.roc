@@ -412,13 +412,9 @@ Inflate := [].{
 					# Last codeword (all ones): finish doubling out to the
 					# full table size.
 					while $len < table_bits {
-						var $j = 0.U64
-						while $j < $cur_table_end {
-							$table = match List.set($table, $cur_table_end + $j, List.get($table, $j) ?? 0) {
-								Ok(set_table) => set_table
-								Err(_) => return Err(CorruptData)
-							}
-							$j = $j + 1
+						$table = match List.copy_range_within($table, $cur_table_end, 0, $cur_table_end) {
+							Ok(doubled_table) => doubled_table
+							Err(_) => return Err(CorruptData)
 						}
 						$cur_table_end = $cur_table_end.shl_wrap(1)
 						$len = $len + 1
@@ -438,13 +434,9 @@ Inflate := [].{
 			while $advancing {
 				$len = $len + 1
 				if $len <= table_bits {
-					var $j = 0.U64
-					while $j < $cur_table_end {
-						$table = match List.set($table, $cur_table_end + $j, List.get($table, $j) ?? 0) {
-							Ok(set_table) => set_table
-							Err(_) => return Err(CorruptData)
-						}
-						$j = $j + 1
+					$table = match List.copy_range_within($table, $cur_table_end, 0, $cur_table_end) {
+						Ok(doubled_table) => doubled_table
+						Err(_) => return Err(CorruptData)
 					}
 					$cur_table_end = $cur_table_end.shl_wrap(1)
 				} else {}
