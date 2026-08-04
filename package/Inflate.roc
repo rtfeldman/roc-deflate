@@ -721,17 +721,22 @@ Inflate := [].{
 		# ── Fast loop ── decode several symbols per unguarded word refill,
 		# decoding ahead by one: every back edge refills and preloads the next
 		# symbol's entry, so its table-load latency overlaps the match copy.
-		# The 16-byte margin covers both refills an iteration can perform:
-		# each advances the cursor by at most seven bytes.
+		# The 24-byte margin covers any two refills an iteration can perform
+		# (each advances the cursor by at most seven bytes and reads eight),
+		# counted without path splitting: a cursor within 14 bytes of the
+		# iteration start plus an eight-byte read stays inside 24. That bound
+		# holds on every path, so the compiler's range proofs discharge each
+		# refill's bounds test without reasoning about which paths exclude
+		# each other.
 		var $entry = 0.U32
-		if $in_next + 16 <= in_len {
+		if $in_next + 24 <= in_len {
 			word0 = U64.from_le_bytes(input, $in_next) ?? 0
 			$bitbuf = $bitbuf.bitwise_or(word0.shl_wrap($bitsleft.to_u8_wrap()))
 			$in_next = $in_next + 7 - $bitsleft.shr_zf_wrap(3).bitwise_and(7)
 			$bitsleft = $bitsleft.bitwise_or(56)
 			$entry = (List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0)
 		} else {}
-		while $done == 0 and $in_next + 16 <= in_len {
+		while $done == 0 and $in_next + 24 <= in_len {
 			var $saved_bitbuf = $bitbuf
 			var $consumed = $entry.bitwise_and(255).to_u64()
 			$bitbuf = $bitbuf.shr_zf_wrap($consumed.to_u8_wrap())
