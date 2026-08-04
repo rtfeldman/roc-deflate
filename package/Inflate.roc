@@ -709,13 +709,125 @@ Inflate := [].{
 		litlen_mask = tables.litlen_mask
 		offset_table = tables.offset
 
+		in_len = List.len(input)
+
 		var $in_next = in_next0
 		var $bitbuf = bitbuf0
 		var $bitsleft = bitsleft0
 		var $overread = overread0
 		var $out = out0
+		var $done = 0.U64
 
-		while True {
+		# ── Fast loop ── decode several symbols per unguarded word refill.
+		while $done == 0 and $in_next + 8 <= in_len {
+			word = U64.from_le_bytes(input, $in_next) ?? 0
+			$bitbuf = $bitbuf.bitwise_or(word.shl_wrap($bitsleft.to_u8_wrap()))
+			$in_next = $in_next + 7 - $bitsleft.shr_zf_wrap(3).bitwise_and(7)
+			$bitsleft = $bitsleft.bitwise_or(56)
+
+			var $entry = (List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0)
+			var $saved_bitbuf = $bitbuf
+			var $consumed = $entry.bitwise_and(255).to_u64()
+			$bitbuf = $bitbuf.shr_zf_wrap($consumed.to_u8_wrap())
+			$bitsleft = $bitsleft - $consumed
+			if $entry.bitwise_and(Inflate.huffdec_subtable_pointer) != 0 {
+				sub_mask = 1.U64.shl_wrap($entry.shr_zf_wrap(8).bitwise_and(63).to_u8_wrap()) - 1
+				sub_index = $entry.shr_zf_wrap(16).to_u64() + $bitbuf.bitwise_and(sub_mask)
+				$entry = (List.get(litlen_table, sub_index) ?? 0)
+				$saved_bitbuf = $bitbuf
+				$consumed = $entry.bitwise_and(255).to_u64()
+				$bitbuf = $bitbuf.shr_zf_wrap($consumed.to_u8_wrap())
+				$bitsleft = $bitsleft - $consumed
+			} else {}
+
+			var $pending = 1.U64
+			if $entry.bitwise_and(Inflate.huffdec_literal) != 0 {
+				$out = List.append($out, $entry.shr_zf_wrap(16).to_u8_wrap())
+				$entry = (List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0)
+				$saved_bitbuf = $bitbuf
+				$consumed = $entry.bitwise_and(255).to_u64()
+				$bitbuf = $bitbuf.shr_zf_wrap($consumed.to_u8_wrap())
+				$bitsleft = $bitsleft - $consumed
+				if $entry.bitwise_and(Inflate.huffdec_subtable_pointer) != 0 {
+					sm2 = 1.U64.shl_wrap($entry.shr_zf_wrap(8).bitwise_and(63).to_u8_wrap()) - 1
+					si2 = $entry.shr_zf_wrap(16).to_u64() + $bitbuf.bitwise_and(sm2)
+					$entry = (List.get(litlen_table, si2) ?? 0)
+					$saved_bitbuf = $bitbuf
+					$consumed = $entry.bitwise_and(255).to_u64()
+					$bitbuf = $bitbuf.shr_zf_wrap($consumed.to_u8_wrap())
+					$bitsleft = $bitsleft - $consumed
+				} else {}
+				if $entry.bitwise_and(Inflate.huffdec_literal) != 0 {
+					$out = List.append($out, $entry.shr_zf_wrap(16).to_u8_wrap())
+					$entry = (List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0)
+					$saved_bitbuf = $bitbuf
+					$consumed = $entry.bitwise_and(255).to_u64()
+					$bitbuf = $bitbuf.shr_zf_wrap($consumed.to_u8_wrap())
+					$bitsleft = $bitsleft - $consumed
+					if $entry.bitwise_and(Inflate.huffdec_subtable_pointer) != 0 {
+						sm3 = 1.U64.shl_wrap($entry.shr_zf_wrap(8).bitwise_and(63).to_u8_wrap()) - 1
+						si3 = $entry.shr_zf_wrap(16).to_u64() + $bitbuf.bitwise_and(sm3)
+						$entry = (List.get(litlen_table, si3) ?? 0)
+						$saved_bitbuf = $bitbuf
+						$consumed = $entry.bitwise_and(255).to_u64()
+						$bitbuf = $bitbuf.shr_zf_wrap($consumed.to_u8_wrap())
+						$bitsleft = $bitsleft - $consumed
+					} else {}
+					if $entry.bitwise_and(Inflate.huffdec_literal) != 0 {
+						$out = List.append($out, $entry.shr_zf_wrap(16).to_u8_wrap())
+						$pending = 0
+					} else {}
+				} else {}
+			} else {}
+
+			if $pending == 1 {
+				if $entry.bitwise_and(Inflate.huffdec_end_of_block) != 0 {
+					$done = 1
+				} else {
+					len_codeword_bits = $entry.shr_zf_wrap(8).bitwise_and(255).to_u8_wrap()
+					len_mask = 1.U64.shl_wrap($consumed.to_u8_wrap()) - 1
+					length = $entry.shr_zf_wrap(16).to_u64()
+						+ $saved_bitbuf.bitwise_and(len_mask).shr_zf_wrap(len_codeword_bits)
+
+					if $bitsleft < 28 {
+						rf = Inflate.refill(input, $in_next, $bitbuf, $bitsleft, $overread)?
+						$in_next = rf.in_next
+						$bitbuf = rf.bitbuf
+						$bitsleft = rf.bitsleft
+						$overread = rf.overread
+					} else {}
+
+					var $off_entry = (List.get(offset_table, $bitbuf.bitwise_and(255)) ?? 0)
+					if $off_entry.bitwise_and(Inflate.huffdec_exceptional) != 0 {
+						$bitbuf = $bitbuf.shr_zf_wrap(8)
+						$bitsleft = $bitsleft - 8
+						osm = 1.U64.shl_wrap($off_entry.shr_zf_wrap(8).bitwise_and(63).to_u8_wrap()) - 1
+						osi = $off_entry.shr_zf_wrap(16).to_u64() + $bitbuf.bitwise_and(osm)
+						$off_entry = (List.get(offset_table, osi) ?? 0)
+					} else {}
+					off_consumed = $off_entry.bitwise_and(255).to_u64()
+					off_codeword_bits = $off_entry.shr_zf_wrap(8).bitwise_and(255).to_u8_wrap()
+					off_mask = 1.U64.shl_wrap(off_consumed.to_u8_wrap()) - 1
+					offset = $off_entry.shr_zf_wrap(16).to_u64()
+						+ $bitbuf.bitwise_and(off_mask).shr_zf_wrap(off_codeword_bits)
+					$bitbuf = $bitbuf.shr_zf_wrap(off_consumed.to_u8_wrap())
+					$bitsleft = $bitsleft - off_consumed
+
+					out_len = List.len($out)
+					if offset > out_len or offset == 0 {
+						return Err(CorruptData)
+					} else {}
+
+					$out = match List.append_range_within($out, out_len - offset, length) {
+						Ok(new_out) => new_out
+						Err(_) => return Err(CorruptData)
+					}
+				}
+			} else {}
+		}
+
+		# ── Careful loop ── one symbol per iteration, tail of input.
+		while $done == 0 {
 			if $bitsleft < 32 {
 				r = Inflate.refill(input, $in_next, $bitbuf, $bitsleft, $overread)?
 				$in_next = r.in_next
