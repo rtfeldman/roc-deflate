@@ -718,16 +718,20 @@ Inflate := [].{
 		var $out = out0
 		var $done = 0.U64
 
-		# ── Fast loop ── decode several symbols per unguarded word refill.
+		# ── Fast loop ── decode several symbols per unguarded word refill,
+		# decoding ahead by one: every back edge refills and preloads the next
+		# symbol's entry, so its table-load latency overlaps the match copy.
 		# The 16-byte margin covers both refills an iteration can perform:
 		# each advances the cursor by at most seven bytes.
-		while $done == 0 and $in_next + 16 <= in_len {
-			word = U64.from_le_bytes(input, $in_next) ?? 0
-			$bitbuf = $bitbuf.bitwise_or(word.shl_wrap($bitsleft.to_u8_wrap()))
+		var $entry = 0.U32
+		if $in_next + 16 <= in_len {
+			word0 = U64.from_le_bytes(input, $in_next) ?? 0
+			$bitbuf = $bitbuf.bitwise_or(word0.shl_wrap($bitsleft.to_u8_wrap()))
 			$in_next = $in_next + 7 - $bitsleft.shr_zf_wrap(3).bitwise_and(7)
 			$bitsleft = $bitsleft.bitwise_or(56)
-
-			var $entry = (List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0)
+			$entry = (List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0)
+		} else {}
+		while $done == 0 and $in_next + 16 <= in_len {
 			var $saved_bitbuf = $bitbuf
 			var $consumed = $entry.bitwise_and(255).to_u64()
 			$bitbuf = $bitbuf.shr_zf_wrap($consumed.to_u8_wrap())
@@ -777,6 +781,11 @@ Inflate := [].{
 					} else {}
 					if $entry.bitwise_and(Inflate.huffdec_literal) != 0 {
 						$out = List.append($out, $entry.shr_zf_wrap(16).to_u8_wrap())
+						word3 = U64.from_le_bytes(input, $in_next) ?? 0
+						$bitbuf = $bitbuf.bitwise_or(word3.shl_wrap($bitsleft.to_u8_wrap()))
+						$in_next = $in_next + 7 - $bitsleft.shr_zf_wrap(3).bitwise_and(7)
+						$bitsleft = $bitsleft.bitwise_or(56)
+						$entry = (List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0)
 						$pending = 0
 					} else {}
 				} else {}
@@ -818,6 +827,14 @@ Inflate := [].{
 					if offset > out_len or offset == 0 {
 						return Err(CorruptData)
 					} else {}
+
+					# Refill and preload the next symbol before the copy runs,
+					# so its table-load latency hides under the copy's stores.
+					word2 = U64.from_le_bytes(input, $in_next) ?? 0
+					$bitbuf = $bitbuf.bitwise_or(word2.shl_wrap($bitsleft.to_u8_wrap()))
+					$in_next = $in_next + 7 - $bitsleft.shr_zf_wrap(3).bitwise_and(7)
+					$bitsleft = $bitsleft.bitwise_or(56)
+					$entry = (List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0)
 
 					$out = match List.append_range_within($out, out_len - offset, length) {
 						Ok(new_out) => new_out
@@ -894,6 +911,7 @@ Inflate := [].{
 				if offset > out_len or offset == 0 {
 					return Err(CorruptData)
 				} else {}
+
 
 				# The match is `length` bytes starting `offset` back in the
 				# output; reading through freshly appended bytes is what
