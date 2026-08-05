@@ -290,11 +290,24 @@ Inflate := [].{
 	## in as it stands.
 	build_decode_table : List(U8), U64, List(U32), U64, U64, Bool, List(U32) -> Try(BuiltTable, [CorruptData, UnexpectedEnd])
 	build_decode_table = |lens, num_syms, decode_results, max_table_bits, max_codeword_len_limit, dynamic_table_bits, scratch| {
+		# The per-symbol loops below index `lens` by every symbol under
+		# `num_syms` and the per-length tables by codeword lengths up to
+		# `max_codeword_len_limit`; bounding everything once up front keeps
+		# each loop's element accesses in bounds.
+		if List.len(lens) < num_syms {
+			return Err(CorruptData)
+		} else {}
 		# Count codewords of each length, including length 0.
 		var $len_counts = List.repeat(0.U64, max_codeword_len_limit + 1)
+		if List.len($len_counts) <= max_codeword_len_limit {
+			return Err(CorruptData)
+		} else {}
 		var $sym = 0.U64
 		while $sym < num_syms {
 			len = (List.get(lens, $sym) ?? 0).to_u64()
+			if len > max_codeword_len_limit {
+				return Err(CorruptData)
+			} else {}
 			$len_counts = match List.set($len_counts, len, (List.get($len_counts, len) ?? 0) + 1) {
 				Ok(set_len_counts) => set_len_counts
 				Err(_) => return Err(CorruptData)
@@ -313,8 +326,13 @@ Inflate := [].{
 		}
 
 		# Sort symbols by codeword length, then symbol value, via a counting
-		# sort, computing the used codespace in the same pass.
-		var $offsets = List.repeat(0.U64, $max_codeword_len + 2)
+		# sort, computing the used codespace in the same pass. The offsets
+		# table is sized by the length limit so any guarded length indexes it
+		# in bounds; entries past the trimmed maximum stay zero and unread.
+		var $offsets = List.repeat(0.U64, max_codeword_len_limit + 2)
+		if List.len($offsets) <= max_codeword_len_limit {
+			return Err(CorruptData)
+		} else {}
 		$offsets = match List.set($offsets, 1, List.get($len_counts, 0) ?? 0) {
 			Ok(set_offsets) => set_offsets
 			Err(_) => return Err(CorruptData)
@@ -337,6 +355,9 @@ Inflate := [].{
 		$sym = 0
 		while $sym < num_syms {
 			len = (List.get(lens, $sym) ?? 0).to_u64()
+			if len > max_codeword_len_limit {
+				return Err(CorruptData)
+			} else {}
 			slot = List.get($offsets, len) ?? 0
 			$sorted_syms = match List.set($sorted_syms, slot, $sym.to_u16_wrap()) {
 				Ok(set_sorted_syms) => set_sorted_syms
