@@ -720,6 +720,13 @@ Inflate := [].{
 		# holds on every path, so the compiler's range proofs discharge each
 		# refill's bounds test without reasoning about which paths exclude
 		# each other.
+		# The entry cursor is caller-controlled; bounding it once lets the
+		# compiler's range proofs discharge the margin addition's overflow
+		# check on every iteration below.
+		if in_next0 > in_len {
+			return Err(CorruptData)
+		} else {}
+
 		var $entry = 0.U32
 		if $in_next + 24 <= in_len {
 			word0 = U64.from_le_bytes(input, $in_next) ?? 0
