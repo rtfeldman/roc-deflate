@@ -627,6 +627,11 @@ Inflate := [].{
 			List.repeat(0.U32, Inflate.precode_enough),
 		)?
 		precode_table = precode_built.table
+		# Every precode lookup below masks with 127, so bounding the table
+		# once keeps the per-symbol reads in bounds.
+		if List.len(precode_table) <= 127 {
+			return Err(CorruptData)
+		} else {}
 
 		# Decode the litlen and offset codeword lengths. The lens list has
 		# slack for the worst-case repeat overrun (137 extra), so repeats can
@@ -721,6 +726,15 @@ Inflate := [].{
 		litlen_table = tables.litlen
 		litlen_mask = tables.litlen_mask
 		offset_table = tables.offset
+		# Every root litlen lookup masks with `litlen_mask` and every root
+		# offset lookup masks with 255; bounding both tables once keeps
+		# those loads in bounds through the whole block.
+		if litlen_mask >= List.len(litlen_table) {
+			return Err(CorruptData)
+		} else {}
+		if List.len(offset_table) <= 255 {
+			return Err(CorruptData)
+		} else {}
 
 		in_len = List.len(input)
 
