@@ -37,11 +37,10 @@ CompressFast := [].{
 		var $in_next = 0.U64
 		var $max_len = DeflateTables.max_match_len
 		var $nice_len = nice_match_length.min(DeflateTables.max_match_len)
-		var $mf = {
-			hash_tab: Matchfinder.init_table(65536),
-			in_cur_base: 0.U64,
-			next_hash: 0.U64,
-		}
+		# Held apart rather than in one record: see HtMatchfinder.State.
+		var $tab = Matchfinder.init_table(65536)
+		var $base = 0.U64
+		var $nh = 0.U64
 		var $seqs = List.repeat(
 			{ litrunlen_and_length: 0.U32, offset: 0.U16, offset_slot: 0.U16 },
 			CompressFast.fast_seq_store_length + 1,
@@ -88,8 +87,10 @@ CompressFast := [].{
 				}
 
 				if $searched == 1 {
-					found = HtMatchfinder.longest_match($mf, input, $in_next, $max_len, $nice_len)?
-					$mf = found.state
+					found = HtMatchfinder.longest_match($tab, $base, $nh, input, $in_next, $max_len, $nice_len)?
+					$tab = found.hash_tab
+					$base = found.in_cur_base
+					$nh = found.next_hash
 
 					if found.length != 0 {
 						length_slot = DeflateTables.length_slot(found.length)
@@ -114,7 +115,10 @@ CompressFast := [].{
 						$seq_idx = $seq_idx + 1
 						$litrunlen = 0
 
-						$mf = HtMatchfinder.skip_bytes($mf, input, $in_next + 1, in_end, found.length - 1)?
+						skipped = HtMatchfinder.skip_bytes($tab, $base, $nh, input, $in_next + 1, in_end, found.length - 1)?
+						$tab = skipped.hash_tab
+						$base = skipped.in_cur_base
+						$nh = skipped.next_hash
 						$in_next = $in_next + found.length
 					} else {
 						lit = (List.get(input, $in_next) ?? 0).to_u64()
