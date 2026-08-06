@@ -26,6 +26,10 @@ CompressFast := [].{
 	compress = |input, nice_match_length| {
 		in_end = List.len(input)
 		static = CompressLazy.build_static_codes(0)?
+		var $s_litlen_lens = static.litlen_lens
+		var $s_litlen_codewords = static.litlen_codewords
+		var $s_offset_lens = static.offset_lens
+		var $s_offset_codewords = static.offset_codewords
 
 		var $out = List.with_capacity(5 * ((in_end + CompressLazy.min_block_length - 1) // CompressLazy.min_block_length).max(1) + in_end)
 		var $bitbuf = 0.U64
@@ -159,28 +163,34 @@ CompressFast := [].{
 			)?
 
 			is_final = if $in_next == in_end { 1 } else { 0 }
-			flushed = BlockOut.flush_block({
-				out: $out,
-				bitbuf: $bitbuf,
-				bitcount: $bitcount,
+			flushed = BlockOut.flush_block(
+				$out,
+				$bitbuf,
+				$bitcount,
 				input,
-				block_begin: in_block_begin,
-				block_length: $in_next - in_block_begin,
-				seqs: $seqs,
-				freqs_litlen: $freqs_litlen,
-				freqs_offset: $freqs_offset,
-				codes: {
-					litlen_lens: litlen_code.lens,
-					litlen_codewords: litlen_code.codewords,
-					offset_lens: offset_code.lens,
-					offset_codewords: offset_code.codewords,
-				},
-				static_codes: static,
+				in_block_begin,
+				$in_next - in_block_begin,
+				$seqs,
+				$freqs_litlen,
+				$freqs_offset,
+				litlen_code.lens,
+				litlen_code.codewords,
+				offset_code.lens,
+				offset_code.codewords,
+				$s_litlen_lens,
+				$s_litlen_codewords,
+				$s_offset_lens,
+				$s_offset_codewords,
 				is_final,
-			})?
+			)?
 			$out = flushed.out
 			$bitbuf = flushed.bitbuf
 			$bitcount = flushed.bitcount
+			$seqs = flushed.seqs
+			$s_litlen_lens = flushed.static_litlen_lens
+			$s_litlen_codewords = flushed.static_litlen_codewords
+			$s_offset_lens = flushed.static_offset_lens
+			$s_offset_codewords = flushed.static_offset_codewords
 
 			if $in_next == in_end {
 				$blocking = 0

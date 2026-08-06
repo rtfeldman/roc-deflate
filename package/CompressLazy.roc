@@ -257,6 +257,10 @@ CompressLazy := [].{
 	compress_greedy = |input, params| {
 		in_end = List.len(input)
 		static = CompressLazy.build_static_codes(0)?
+		var $s_litlen_lens = static.litlen_lens
+		var $s_litlen_codewords = static.litlen_codewords
+		var $s_offset_lens = static.offset_lens
+		var $s_offset_codewords = static.offset_codewords
 
 		var $out = List.with_capacity(5 * ((in_end + CompressLazy.min_block_length - 1) // CompressLazy.min_block_length).max(1) + in_end)
 		var $bitbuf = 0.U64
@@ -264,14 +268,15 @@ CompressLazy := [].{
 		var $in_next = 0.U64
 		var $max_len = DeflateTables.max_match_len
 		var $nice_len = params.nice_match_length.min(DeflateTables.max_match_len)
-		var $mf = {
-			hash3: Matchfinder.init_table(32768),
-			hash4: Matchfinder.init_table(65536),
-			next_tab: Matchfinder.init_table(Matchfinder.window_size),
-			in_cur_base: 0.U64,
-			next_hash3: 0.U64,
-			next_hash4: 0.U64,
-		}
+		# The matchfinder tables are held as separate values rather than one
+		# record: a record of lists is copied whenever it crosses a call
+		# boundary, which at these sizes would dwarf the search itself.
+		var $tab3 = Matchfinder.init_table(32768)
+		var $tab4 = Matchfinder.init_table(65536)
+		var $nt = Matchfinder.init_table(Matchfinder.window_size)
+		var $base = 0.U64
+		var $nh3 = 0.U64
+		var $nh4 = 0.U64
 		var $seqs = List.repeat(
 			{ litrunlen_and_length: 0.U32, offset: 0.U16, offset_slot: 0.U16 },
 			CompressLazy.seq_store_length + 1,
@@ -312,7 +317,12 @@ CompressLazy := [].{
 				}
 
 				found = HcMatchfinder.longest_match(
-					$mf,
+					$tab3,
+					$tab4,
+					$nt,
+					$base,
+					$nh3,
+					$nh4,
 					input,
 					$in_next,
 					min_len - 1,
@@ -320,7 +330,12 @@ CompressLazy := [].{
 					$nice_len,
 					params.max_search_depth,
 				)?
-				$mf = found.state
+				$tab3 = found.hash3
+				$tab4 = found.hash4
+				$nt = found.next_tab
+				$base = found.in_cur_base
+				$nh3 = found.next_hash3
+				$nh4 = found.next_hash4
 
 				if found.length >= min_len
 					and (found.length > DeflateTables.min_match_len or found.offset <= 4096) {
@@ -354,7 +369,13 @@ CompressLazy := [].{
 					$seq_idx = $seq_idx + 1
 					$litrunlen = 0
 
-					$mf = HcMatchfinder.skip_bytes($mf, input, $in_next + 1, in_end, found.length - 1)?
+					skipped = HcMatchfinder.skip_bytes($tab3, $tab4, $nt, $base, $nh3, $nh4, input, $in_next + 1, in_end, found.length - 1)?
+					$tab3 = skipped.hash3
+					$tab4 = skipped.hash4
+					$nt = skipped.next_tab
+					$base = skipped.in_cur_base
+					$nh3 = skipped.next_hash3
+					$nh4 = skipped.next_hash4
 					$in_next = $in_next + found.length
 				} else {
 					lit = (List.get(input, $in_next) ?? 0).to_u64()
@@ -418,28 +439,34 @@ CompressLazy := [].{
 			)?
 
 			is_final = if $in_next == in_end { 1 } else { 0 }
-			flushed = BlockOut.flush_block({
-				out: $out,
-				bitbuf: $bitbuf,
-				bitcount: $bitcount,
+			flushed = BlockOut.flush_block(
+				$out,
+				$bitbuf,
+				$bitcount,
 				input,
-				block_begin: in_block_begin,
-				block_length: $in_next - in_block_begin,
-				seqs: $seqs,
-				freqs_litlen: $freqs_litlen,
-				freqs_offset: $freqs_offset,
-				codes: {
-					litlen_lens: litlen_code.lens,
-					litlen_codewords: litlen_code.codewords,
-					offset_lens: offset_code.lens,
-					offset_codewords: offset_code.codewords,
-				},
-				static_codes: static,
+				in_block_begin,
+				$in_next - in_block_begin,
+				$seqs,
+				$freqs_litlen,
+				$freqs_offset,
+				litlen_code.lens,
+				litlen_code.codewords,
+				offset_code.lens,
+				offset_code.codewords,
+				$s_litlen_lens,
+				$s_litlen_codewords,
+				$s_offset_lens,
+				$s_offset_codewords,
 				is_final,
-			})?
+			)?
 			$out = flushed.out
 			$bitbuf = flushed.bitbuf
 			$bitcount = flushed.bitcount
+			$seqs = flushed.seqs
+			$s_litlen_lens = flushed.static_litlen_lens
+			$s_litlen_codewords = flushed.static_litlen_codewords
+			$s_offset_lens = flushed.static_offset_lens
+			$s_offset_codewords = flushed.static_offset_codewords
 
 			if $in_next == in_end {
 				$blocking = 0
@@ -462,6 +489,10 @@ CompressLazy := [].{
 	compress = |input, params| {
 		in_end = List.len(input)
 		static = CompressLazy.build_static_codes(0)?
+		var $s_litlen_lens = static.litlen_lens
+		var $s_litlen_codewords = static.litlen_codewords
+		var $s_offset_lens = static.offset_lens
+		var $s_offset_codewords = static.offset_codewords
 
 		var $out = List.with_capacity(5 * ((in_end + CompressLazy.min_block_length - 1) // CompressLazy.min_block_length).max(1) + in_end)
 		var $bitbuf = 0.U64
@@ -469,14 +500,15 @@ CompressLazy := [].{
 		var $in_next = 0.U64
 		var $max_len = DeflateTables.max_match_len
 		var $nice_len = params.nice_match_length.min(DeflateTables.max_match_len)
-		var $mf = {
-			hash3: Matchfinder.init_table(32768),
-			hash4: Matchfinder.init_table(65536),
-			next_tab: Matchfinder.init_table(Matchfinder.window_size),
-			in_cur_base: 0.U64,
-			next_hash3: 0.U64,
-			next_hash4: 0.U64,
-		}
+		# The matchfinder tables are held as separate values rather than one
+		# record: a record of lists is copied whenever it crosses a call
+		# boundary, which at these sizes would dwarf the search itself.
+		var $tab3 = Matchfinder.init_table(32768)
+		var $tab4 = Matchfinder.init_table(65536)
+		var $nt = Matchfinder.init_table(Matchfinder.window_size)
+		var $base = 0.U64
+		var $nh3 = 0.U64
+		var $nh4 = 0.U64
 		var $seqs = List.repeat(
 			{ litrunlen_and_length: 0.U32, offset: 0.U16, offset_slot: 0.U16 },
 			CompressLazy.seq_store_length + 1,
@@ -528,7 +560,12 @@ CompressLazy := [].{
 				}
 
 				found = HcMatchfinder.longest_match(
-					$mf,
+					$tab3,
+					$tab4,
+					$nt,
+					$base,
+					$nh3,
+					$nh4,
 					input,
 					$in_next,
 					$min_len - 1,
@@ -536,7 +573,12 @@ CompressLazy := [].{
 					$nice_len,
 					params.max_search_depth,
 				)?
-				$mf = found.state
+				$tab3 = found.hash3
+				$tab4 = found.hash4
+				$nt = found.next_tab
+				$base = found.in_cur_base
+				$nh3 = found.next_hash3
+				$nh4 = found.next_hash4
 
 				if found.length < $min_len
 					or (found.length == DeflateTables.min_match_len and found.offset > 8192) {
@@ -581,7 +623,12 @@ CompressLazy := [].{
 							# Half the search depth here: the initial match is
 							# worth more effort than the lookahead.
 							nxt = HcMatchfinder.longest_match(
-								$mf,
+								$tab3,
+								$tab4,
+								$nt,
+								$base,
+								$nh3,
+								$nh4,
 								input,
 								$in_next,
 								$cur_len - 1,
@@ -589,7 +636,12 @@ CompressLazy := [].{
 								$nice_len,
 								params.max_search_depth.shr_zf_wrap(1),
 							)?
-							$mf = nxt.state
+							$tab3 = nxt.hash3
+							$tab4 = nxt.hash4
+							$nt = nxt.next_tab
+							$base = nxt.in_cur_base
+							$nh3 = nxt.next_hash3
+							$nh4 = nxt.next_hash4
 							$in_next = $in_next + 1
 
 							better = nxt.length >= $cur_len
@@ -623,7 +675,12 @@ CompressLazy := [].{
 								} else {
 								}
 								nxt2 = HcMatchfinder.longest_match(
-									$mf,
+									$tab3,
+									$tab4,
+									$nt,
+									$base,
+									$nh3,
+									$nh4,
 									input,
 									$in_next,
 									$cur_len - 1,
@@ -631,7 +688,12 @@ CompressLazy := [].{
 									$nice_len,
 									params.max_search_depth.shr_zf_wrap(2),
 								)?
-								$mf = nxt2.state
+								$tab3 = nxt2.hash3
+								$tab4 = nxt2.hash4
+								$nt = nxt2.next_tab
+								$base = nxt2.in_cur_base
+								$nh3 = nxt2.next_hash3
+								$nh4 = nxt2.next_hash4
 								$in_next = $in_next + 1
 
 								better2 = nxt2.length >= $cur_len
@@ -712,7 +774,13 @@ CompressLazy := [].{
 							$litrunlen = 0
 
 							if $skip_after > 0 {
-								$mf = HcMatchfinder.skip_bytes($mf, input, $in_next, in_end, $skip_after)?
+								skipped = HcMatchfinder.skip_bytes($tab3, $tab4, $nt, $base, $nh3, $nh4, input, $in_next, in_end, $skip_after)?
+								$tab3 = skipped.hash3
+								$tab4 = skipped.hash4
+								$nt = skipped.next_tab
+								$base = skipped.in_cur_base
+								$nh3 = skipped.next_hash3
+								$nh4 = skipped.next_hash4
 								$in_next = $in_next + $skip_after
 							} else {
 							}
@@ -769,28 +837,34 @@ CompressLazy := [].{
 			)?
 
 			is_final = if $in_next == in_end { 1 } else { 0 }
-			flushed = BlockOut.flush_block({
-				out: $out,
-				bitbuf: $bitbuf,
-				bitcount: $bitcount,
+			flushed = BlockOut.flush_block(
+				$out,
+				$bitbuf,
+				$bitcount,
 				input,
-				block_begin: in_block_begin,
-				block_length: $in_next - in_block_begin,
-				seqs: $seqs,
-				freqs_litlen: $freqs_litlen,
-				freqs_offset: $freqs_offset,
-				codes: {
-					litlen_lens: litlen_code.lens,
-					litlen_codewords: litlen_code.codewords,
-					offset_lens: offset_code.lens,
-					offset_codewords: offset_code.codewords,
-				},
-				static_codes: static,
+				in_block_begin,
+				$in_next - in_block_begin,
+				$seqs,
+				$freqs_litlen,
+				$freqs_offset,
+				litlen_code.lens,
+				litlen_code.codewords,
+				offset_code.lens,
+				offset_code.codewords,
+				$s_litlen_lens,
+				$s_litlen_codewords,
+				$s_offset_lens,
+				$s_offset_codewords,
 				is_final,
-			})?
+			)?
 			$out = flushed.out
 			$bitbuf = flushed.bitbuf
 			$bitcount = flushed.bitcount
+			$seqs = flushed.seqs
+			$s_litlen_lens = flushed.static_litlen_lens
+			$s_litlen_codewords = flushed.static_litlen_codewords
+			$s_offset_lens = flushed.static_offset_lens
+			$s_offset_codewords = flushed.static_offset_codewords
 
 			if $in_next == in_end {
 				$blocking = 0

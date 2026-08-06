@@ -19,3 +19,4 @@ benchmark/c/.build/
 # Decompression benchmark caches (streams + builds), regenerated on demand
 benchmark/.streams/
 benchmark/.build/
+benchmark/.work/

@@ -168,13 +168,13 @@ BlockOut := [].{
 	## Work out everything the dynamic Huffman header needs: how many litlen
 	## and offset lengths must be sent, the precode items that encode them, and
 	## the precode itself.
-	precompute_huffman_header : Codes -> Try(PrecodeInfo, [CompressBug])
-	precompute_huffman_header = |codes| {
+	precompute_huffman_header : List(U8), List(U8) -> Try(PrecodeInfo, [CompressBug])
+	precompute_huffman_header = |litlen_lens, offset_lens| {
 		# Trailing unused symbols need not be sent.
 		var $num_litlen_syms = DeflateTables.num_litlen_syms
 		var $scanning = True
 		while $scanning and $num_litlen_syms > 257 {
-			if (List.get(codes.litlen_lens, $num_litlen_syms - 1) ?? 0) != 0 {
+			if (List.get(litlen_lens, $num_litlen_syms - 1) ?? 0) != 0 {
 				$scanning = False
 			} else {
 				$num_litlen_syms = $num_litlen_syms - 1
@@ -183,7 +183,7 @@ BlockOut := [].{
 		var $num_offset_syms = DeflateTables.num_offset_syms
 		$scanning = True
 		while $scanning and $num_offset_syms > 1 {
-			if (List.get(codes.offset_lens, $num_offset_syms - 1) ?? 0) != 0 {
+			if (List.get(offset_lens, $num_offset_syms - 1) ?? 0) != 0 {
 				$scanning = False
 			} else {
 				$num_offset_syms = $num_offset_syms - 1
@@ -195,12 +195,12 @@ BlockOut := [].{
 		var $lens = List.with_capacity(num_lens)
 		var $i = 0.U64
 		while $i < $num_litlen_syms {
-			$lens = List.append($lens, List.get(codes.litlen_lens, $i) ?? 0)
+			$lens = List.append($lens, List.get(litlen_lens, $i) ?? 0)
 			$i = $i + 1
 		}
 		$i = 0
 		while $i < $num_offset_syms {
-			$lens = List.append($lens, List.get(codes.offset_lens, $i) ?? 0)
+			$lens = List.append($lens, List.get(offset_lens, $i) ?? 0)
 			$i = $i + 1
 		}
 
@@ -248,8 +248,8 @@ BlockOut := [].{
 	## Concatenate each match length's litlen codeword with its extra bits, so
 	## writing a match is one table lookup rather than a slot lookup plus two
 	## assembles.
-	compute_full_len_codewords : Codes -> Try(FullLens, [CompressBug])
-	compute_full_len_codewords = |codes| {
+	compute_full_len_codewords : List(U8), List(U32) -> Try(FullLens, [CompressBug])
+	compute_full_len_codewords = |litlen_lens, litlen_codewords| {
 		var $codewords = List.repeat(0.U32, DeflateTables.max_match_len + 1)
 		var $lens = List.repeat(0.U8, DeflateTables.max_match_len + 1)
 		var $len = DeflateTables.min_match_len
@@ -257,9 +257,9 @@ BlockOut := [].{
 			slot = DeflateTables.length_slot($len)
 			litlen_sym = DeflateTables.first_len_sym + slot
 			extra_bits = $len.to_u32_wrap() - (List.get(DeflateTables.length_slot_base, slot) ?? 0)
-			sym_len = (List.get(codes.litlen_lens, litlen_sym) ?? 0)
+			sym_len = (List.get(litlen_lens, litlen_sym) ?? 0)
 			$codewords = match List.set($codewords, $len,
-				(List.get(codes.litlen_codewords, litlen_sym) ?? 0)
+				(List.get(litlen_codewords, litlen_sym) ?? 0)
 					.bitwise_or(extra_bits.shl_wrap(sym_len))) {
 				Ok(next) => next
 				Err(_) => return Err(CompressBug)
@@ -275,19 +275,22 @@ BlockOut := [].{
 	}
 	OutState : { out : List(U8), bitbuf : U64, bitcount : U64 }
 
-	FlushArgs : {
+	## Everything the writer hands back: the output and the bit state, plus
+	## the lists it borrowed, since a list returns to its owner rather than
+	## being left behind at the call.
+	FlushResult : {
 		out : List(U8),
 		bitbuf : U64,
 		bitcount : U64,
-		input : List(U8),
-		block_begin : U64,
-		block_length : U64,
 		seqs : List(Sequence),
-		freqs_litlen : List(U32),
-		freqs_offset : List(U32),
-		codes : Codes,
-		static_codes : Codes,
-		is_final : U64,
+		litlen_lens : List(U8),
+		litlen_codewords : List(U32),
+		offset_lens : List(U8),
+		offset_codewords : List(U32),
+		static_litlen_lens : List(U8),
+		static_litlen_codewords : List(U32),
+		static_offset_lens : List(U8),
+		static_offset_codewords : List(U32),
 	}
 
 	## Choose the cheapest of the three block types and write the block.
@@ -296,10 +299,9 @@ BlockOut := [].{
 	## which is what lets the writer commit to a type and then emit the whole
 	## block without re-checking anything. Ties prefer uncompressed, then
 	## static, then dynamic, as libdeflate does.
-	flush_block : FlushArgs -> Try(OutState, [CompressBug])
-	flush_block = |args| {
-		codes = args.codes
-		precode = BlockOut.precompute_huffman_header(codes)?
+	flush_block : List(U8), U64, U64, List(U8), U64, U64, List(BlockOut.Sequence), List(U32), List(U32), List(U8), List(U32), List(U8), List(U32), List(U8), List(U32), List(U8), List(U32), U64 -> Try(FlushResult, [CompressBug])
+	flush_block = |out_0, bitbuf_0, bitcount_0, input, block_begin, block_length_0, seqs, freqs_litlen, freqs_offset, litlen_lens, litlen_codewords, offset_lens, offset_codewords, s_litlen_lens, s_litlen_codewords, s_offset_lens, s_offset_codewords, is_final| {
+		precode = BlockOut.precompute_huffman_header(litlen_lens, offset_lens)?
 
 		# Cost of the dynamic Huffman header: the three length counts, the
 		# explicit precode lengths, then the precode-encoded lengths.
@@ -317,20 +319,20 @@ BlockOut := [].{
 		var $static_cost = 3.U64
 		$sym = 0
 		while $sym < 144 {
-			freq = (List.get(args.freqs_litlen, $sym) ?? 0).to_u64()
-			$dynamic_cost = $dynamic_cost + freq * (List.get(codes.litlen_lens, $sym) ?? 0).to_u64()
+			freq = (List.get(freqs_litlen, $sym) ?? 0).to_u64()
+			$dynamic_cost = $dynamic_cost + freq * (List.get(litlen_lens, $sym) ?? 0).to_u64()
 			$static_cost = $static_cost + freq * 8
 			$sym = $sym + 1
 		}
 		while $sym < 256 {
-			freq = (List.get(args.freqs_litlen, $sym) ?? 0).to_u64()
-			$dynamic_cost = $dynamic_cost + freq * (List.get(codes.litlen_lens, $sym) ?? 0).to_u64()
+			freq = (List.get(freqs_litlen, $sym) ?? 0).to_u64()
+			$dynamic_cost = $dynamic_cost + freq * (List.get(litlen_lens, $sym) ?? 0).to_u64()
 			$static_cost = $static_cost + freq * 9
 			$sym = $sym + 1
 		}
 
 		# End-of-block.
-		$dynamic_cost = $dynamic_cost + (List.get(codes.litlen_lens, DeflateTables.end_of_block) ?? 0).to_u64()
+		$dynamic_cost = $dynamic_cost + (List.get(litlen_lens, DeflateTables.end_of_block) ?? 0).to_u64()
 		$static_cost = $static_cost + 7
 
 		# Lengths.
@@ -338,9 +340,9 @@ BlockOut := [].{
 		while $sym < 29 {
 			extra = (List.get(DeflateTables.extra_length_bits, $sym) ?? 0).to_u64()
 			litlen_sym = DeflateTables.first_len_sym + $sym
-			freq = (List.get(args.freqs_litlen, litlen_sym) ?? 0).to_u64()
-			$dynamic_cost = $dynamic_cost + freq * (extra + (List.get(codes.litlen_lens, litlen_sym) ?? 0).to_u64())
-			$static_cost = $static_cost + freq * (extra + (List.get(args.static_codes.litlen_lens, litlen_sym) ?? 0).to_u64())
+			freq = (List.get(freqs_litlen, litlen_sym) ?? 0).to_u64()
+			$dynamic_cost = $dynamic_cost + freq * (extra + (List.get(litlen_lens, litlen_sym) ?? 0).to_u64())
+			$static_cost = $static_cost + freq * (extra + (List.get(s_litlen_lens, litlen_sym) ?? 0).to_u64())
 			$sym = $sym + 1
 		}
 
@@ -348,29 +350,29 @@ BlockOut := [].{
 		$sym = 0
 		while $sym < 30 {
 			extra = (List.get(DeflateTables.extra_offset_bits, $sym) ?? 0).to_u64()
-			freq = (List.get(args.freqs_offset, $sym) ?? 0).to_u64()
-			$dynamic_cost = $dynamic_cost + freq * (extra + (List.get(codes.offset_lens, $sym) ?? 0).to_u64())
+			freq = (List.get(freqs_offset, $sym) ?? 0).to_u64()
+			$dynamic_cost = $dynamic_cost + freq * (extra + (List.get(offset_lens, $sym) ?? 0).to_u64())
 			$static_cost = $static_cost + freq * (extra + 5)
 			$sym = $sym + 1
 		}
 
 		# An uncompressed block pads to a byte, then spends four bytes of
 		# header per 65535 bytes of payload.
-		block_length = args.block_length
+		block_length = block_length_0
 		num_uncompressed_blocks = (block_length + 65534) // 65535
 		uncompressed_cost = 3
-			+ 0.U64.minus_wrap(args.bitcount + 3).bitwise_and(7)
+			+ 0.U64.minus_wrap(bitcount_0 + 3).bitwise_and(7)
 			+ 32
 			+ 40 * (num_uncompressed_blocks - 1)
 			+ 8 * block_length
 
 		best_cost = $dynamic_cost.min($static_cost).min(uncompressed_cost)
 
-		var $out = args.out
-		var $bitbuf = args.bitbuf
-		var $bitcount = args.bitcount
-		var $in_next = args.block_begin
-		in_end = args.block_begin + block_length
+		var $out = out_0
+		var $bitbuf = bitbuf_0
+		var $bitcount = bitcount_0
+		var $in_next = block_begin
+		in_end = block_begin + block_length
 
 		if best_cost == uncompressed_cost {
 			# Uncompressed. DEFLATE caps a stored block at 65535 bytes, so a
@@ -379,7 +381,7 @@ BlockOut := [].{
 			while $storing {
 				remaining = in_end - $in_next
 				len = remaining.min(65535)
-				bfinal = if remaining <= 65535 { args.is_final } else { 0 }
+				bfinal = if remaining <= 65535 { is_final } else { 0 }
 
 				# The header is three bits, then the stream aligns to a byte.
 				$out = List.append($out, bfinal.shl_wrap($bitcount.to_u8_wrap()).bitwise_or($bitbuf).to_u8_wrap())
@@ -398,20 +400,32 @@ BlockOut := [].{
 					Ok(next) => next
 					Err(_) => return Err(CompressBug)
 				}
-				$out = List.append_sublist($out, args.input, { start: $in_next, len })
+				$out = List.append_sublist($out, input, { start: $in_next, len })
 				$in_next = $in_next + len
 				if $in_next == in_end {
 					$storing = False
 				} else {
 				}
 			}
-			Ok({ out: $out, bitbuf: $bitbuf, bitcount: $bitcount })
+			Ok({
+				out: $out,
+				bitbuf: $bitbuf,
+				bitcount: $bitcount,
+				seqs,
+				litlen_lens,
+				litlen_codewords,
+				offset_lens,
+				offset_codewords,
+				static_litlen_lens: s_litlen_lens,
+				static_litlen_codewords: s_litlen_codewords,
+				static_offset_lens: s_offset_lens,
+				static_offset_codewords: s_offset_codewords,
+			})
 		} else {
 			use_static = best_cost == $static_cost
-			write_codes = if use_static { args.static_codes } else { codes }
 
 			if use_static {
-				$bitbuf = $bitbuf.bitwise_or(args.is_final.shl_wrap($bitcount.to_u8_wrap()))
+				$bitbuf = $bitbuf.bitwise_or(is_final.shl_wrap($bitcount.to_u8_wrap()))
 				$bitcount = $bitcount + 1
 				$bitbuf = $bitbuf.bitwise_or(DeflateTables.blocktype_static.shl_wrap($bitcount.to_u8_wrap()))
 				$bitcount = $bitcount + 2
@@ -423,7 +437,7 @@ BlockOut := [].{
 				$bitbuf = $bitbuf.shr_zf_wrap(n.shl_wrap(3).to_u8_wrap())
 				$bitcount = $bitcount.bitwise_and(7)
 			} else {
-				$bitbuf = $bitbuf.bitwise_or(args.is_final.shl_wrap($bitcount.to_u8_wrap()))
+				$bitbuf = $bitbuf.bitwise_or(is_final.shl_wrap($bitcount.to_u8_wrap()))
 				$bitcount = $bitcount + 1
 				$bitbuf = $bitbuf.bitwise_or(DeflateTables.blocktype_dynamic.shl_wrap($bitcount.to_u8_wrap()))
 				$bitcount = $bitcount + 2
@@ -483,19 +497,18 @@ BlockOut := [].{
 				}
 			}
 
-			full = BlockOut.compute_full_len_codewords(write_codes)?
-			litlen_codewords = write_codes.litlen_codewords
-			litlen_lens = write_codes.litlen_lens
-			offset_codewords = write_codes.offset_codewords
-			offset_lens = write_codes.offset_lens
+			w_litlen_lens = if use_static { s_litlen_lens } else { litlen_lens }
+			w_litlen_codewords = if use_static { s_litlen_codewords } else { litlen_codewords }
+			w_offset_lens = if use_static { s_offset_lens } else { offset_lens }
+			w_offset_codewords = if use_static { s_offset_codewords } else { offset_codewords }
+			full = BlockOut.compute_full_len_codewords(w_litlen_lens, w_litlen_codewords)?
 			full_codewords = full.codewords
 			full_lens = full.lens
-			input = args.input
 
 			var $seq_idx = 0.U64
 			var $writing = True
 			while $writing {
-				seq = List.get(args.seqs, $seq_idx) ?? { litrunlen_and_length: 0, offset: 0, offset_slot: 0 }
+				seq = List.get(seqs, $seq_idx) ?? { litrunlen_and_length: 0, offset: 0, offset_slot: 0 }
 				var $litrunlen = seq.litrunlen_and_length.bitwise_and(BlockOut.seq_litrunlen_mask).to_u64()
 				length = seq.litrunlen_and_length.shr_zf_wrap(BlockOut.seq_length_shift).to_u64()
 
@@ -503,17 +516,17 @@ BlockOut := [].{
 				# 14-bit codewords stay inside the 63-bit buffer.
 				while $litrunlen >= 4 {
 					lit0 = (List.get(input, $in_next) ?? 0).to_u64()
-					$bitbuf = $bitbuf.bitwise_or((List.get(litlen_codewords, lit0) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
-					$bitcount = $bitcount + (List.get(litlen_lens, lit0) ?? 0).to_u64()
+					$bitbuf = $bitbuf.bitwise_or((List.get(w_litlen_codewords, lit0) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
+					$bitcount = $bitcount + (List.get(w_litlen_lens, lit0) ?? 0).to_u64()
 					lit1 = (List.get(input, $in_next + 1) ?? 0).to_u64()
-					$bitbuf = $bitbuf.bitwise_or((List.get(litlen_codewords, lit1) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
-					$bitcount = $bitcount + (List.get(litlen_lens, lit1) ?? 0).to_u64()
+					$bitbuf = $bitbuf.bitwise_or((List.get(w_litlen_codewords, lit1) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
+					$bitcount = $bitcount + (List.get(w_litlen_lens, lit1) ?? 0).to_u64()
 					lit2 = (List.get(input, $in_next + 2) ?? 0).to_u64()
-					$bitbuf = $bitbuf.bitwise_or((List.get(litlen_codewords, lit2) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
-					$bitcount = $bitcount + (List.get(litlen_lens, lit2) ?? 0).to_u64()
+					$bitbuf = $bitbuf.bitwise_or((List.get(w_litlen_codewords, lit2) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
+					$bitcount = $bitcount + (List.get(w_litlen_lens, lit2) ?? 0).to_u64()
 					lit3 = (List.get(input, $in_next + 3) ?? 0).to_u64()
-					$bitbuf = $bitbuf.bitwise_or((List.get(litlen_codewords, lit3) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
-					$bitcount = $bitcount + (List.get(litlen_lens, lit3) ?? 0).to_u64()
+					$bitbuf = $bitbuf.bitwise_or((List.get(w_litlen_codewords, lit3) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
+					$bitcount = $bitcount + (List.get(w_litlen_lens, lit3) ?? 0).to_u64()
 					$in_next = $in_next + 4
 					n = $bitcount.shr_zf_wrap(3)
 					$out = match $bitbuf.append_le_bytes_to($out, n.to_u8_wrap()) {
@@ -526,18 +539,18 @@ BlockOut := [].{
 				}
 				if $litrunlen != 0 {
 					lit0 = (List.get(input, $in_next) ?? 0).to_u64()
-					$bitbuf = $bitbuf.bitwise_or((List.get(litlen_codewords, lit0) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
-					$bitcount = $bitcount + (List.get(litlen_lens, lit0) ?? 0).to_u64()
+					$bitbuf = $bitbuf.bitwise_or((List.get(w_litlen_codewords, lit0) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
+					$bitcount = $bitcount + (List.get(w_litlen_lens, lit0) ?? 0).to_u64()
 					$in_next = $in_next + 1
 					if $litrunlen >= 2 {
 						lit1 = (List.get(input, $in_next) ?? 0).to_u64()
-						$bitbuf = $bitbuf.bitwise_or((List.get(litlen_codewords, lit1) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
-						$bitcount = $bitcount + (List.get(litlen_lens, lit1) ?? 0).to_u64()
+						$bitbuf = $bitbuf.bitwise_or((List.get(w_litlen_codewords, lit1) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
+						$bitcount = $bitcount + (List.get(w_litlen_lens, lit1) ?? 0).to_u64()
 						$in_next = $in_next + 1
 						if $litrunlen >= 3 {
 							lit2 = (List.get(input, $in_next) ?? 0).to_u64()
-							$bitbuf = $bitbuf.bitwise_or((List.get(litlen_codewords, lit2) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
-							$bitcount = $bitcount + (List.get(litlen_lens, lit2) ?? 0).to_u64()
+							$bitbuf = $bitbuf.bitwise_or((List.get(w_litlen_codewords, lit2) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
+							$bitcount = $bitcount + (List.get(w_litlen_lens, lit2) ?? 0).to_u64()
 							$in_next = $in_next + 1
 						} else {
 						}
@@ -563,8 +576,8 @@ BlockOut := [].{
 					offset_slot = seq.offset_slot.to_u64()
 					$bitbuf = $bitbuf.bitwise_or((List.get(full_codewords, length) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
 					$bitcount = $bitcount + (List.get(full_lens, length) ?? 0).to_u64()
-					$bitbuf = $bitbuf.bitwise_or((List.get(offset_codewords, offset_slot) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
-					$bitcount = $bitcount + (List.get(offset_lens, offset_slot) ?? 0).to_u64()
+					$bitbuf = $bitbuf.bitwise_or((List.get(w_offset_codewords, offset_slot) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
+					$bitcount = $bitcount + (List.get(w_offset_lens, offset_slot) ?? 0).to_u64()
 					$bitbuf = $bitbuf.bitwise_or((offset - (List.get(DeflateTables.offset_slot_base, offset_slot) ?? 0).to_u64()).shl_wrap($bitcount.to_u8_wrap()))
 					$bitcount = $bitcount + (List.get(DeflateTables.extra_offset_bits, offset_slot) ?? 0).to_u64()
 					n = $bitcount.shr_zf_wrap(3)
@@ -580,8 +593,8 @@ BlockOut := [].{
 			}
 
 			# End of block.
-			$bitbuf = $bitbuf.bitwise_or((List.get(litlen_codewords, DeflateTables.end_of_block) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
-			$bitcount = $bitcount + (List.get(litlen_lens, DeflateTables.end_of_block) ?? 0).to_u64()
+			$bitbuf = $bitbuf.bitwise_or((List.get(w_litlen_codewords, DeflateTables.end_of_block) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
+			$bitcount = $bitcount + (List.get(w_litlen_lens, DeflateTables.end_of_block) ?? 0).to_u64()
 			n = $bitcount.shr_zf_wrap(3)
 			$out = match $bitbuf.append_le_bytes_to($out, n.to_u8_wrap()) {
 				Ok(next) => next
@@ -590,7 +603,20 @@ BlockOut := [].{
 			$bitbuf = $bitbuf.shr_zf_wrap(n.shl_wrap(3).to_u8_wrap())
 			$bitcount = $bitcount.bitwise_and(7)
 
-			Ok({ out: $out, bitbuf: $bitbuf, bitcount: $bitcount })
+			Ok({
+				out: $out,
+				bitbuf: $bitbuf,
+				bitcount: $bitcount,
+				seqs,
+				litlen_lens,
+				litlen_codewords,
+				offset_lens,
+				offset_codewords,
+				static_litlen_lens: s_litlen_lens,
+				static_litlen_codewords: s_litlen_codewords,
+				static_offset_lens: s_offset_lens,
+				static_offset_codewords: s_offset_codewords,
+			})
 		}
 	}
 }
