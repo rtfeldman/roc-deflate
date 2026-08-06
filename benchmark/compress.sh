@@ -49,7 +49,20 @@ if [ ! -x "$build/cbench" ] || [ "$here/cbench.c" -nt "$build/cbench" ]; then
 		"$libdeflate_src"/lib/*.c "$libdeflate_src"/lib/*/*.c
 fi
 
-if [ ! -x "$build/ctime" ] || [ "$here/ctime.roc" -nt "$build/ctime" ]; then
+# Rebuild when the harness or any package source is newer than the binary;
+# checking only the harness silently benchmarks a stale compressor.
+needs_build=0
+if [ ! -x "$build/ctime" ]; then
+	needs_build=1
+else
+	while IFS= read -r src; do
+		if [ "$src" -nt "$build/ctime" ]; then
+			needs_build=1
+			break
+		fi
+	done < <(find "$here/ctime.roc" "$here/../package" -name '*.roc')
+fi
+if [ "$needs_build" -eq 1 ]; then
 	echo "building ctime (roc --opt=speed)"
 	(cd "$here" && "$roc" build --opt=speed ctime.roc)
 	mv "$here/ctime" "$build/ctime"
