@@ -39,4 +39,14 @@ Deflate := [].{
 	decompress : List(U8) -> Try(List(U8), DeflateError)
 	decompress = |input|
 		Inflate.decompress(input)
+
+	## Decompress a raw DEFLATE stream, appending the output to `out`.
+	##
+	## Passing a list with enough spare capacity for the whole result means
+	## the decompressor never reallocates mid-stream, and a returned list can
+	## be emptied with its capacity kept and passed back in for the next
+	## stream.
+	decompress_into : List(U8), List(U8) -> Try(List(U8), DeflateError)
+	decompress_into = |input, out|
+		Inflate.decompress_into(input, out)
 }

@@ -18,10 +18,22 @@ Inflate := [].{
 	## Mirrors `libdeflate_deflate_decompress`'s generic loop. Input past the
 	## final block is ignored, matching a stream embedded in a larger buffer.
 	decompress : List(U8) -> Try(List(U8), [CorruptData, UnexpectedEnd])
-	decompress = |input| {
+	decompress = |input|
+		Inflate.decompress_into(input, List.with_capacity(List.len(input) * 3))
+
+	## Decompress a raw DEFLATE stream, appending the output to `out`.
+	##
+	## The caller controls the output allocation: passing a list with enough
+	## spare capacity for the whole result (libdeflate's own calling
+	## convention, where the caller always supplies the output buffer) means
+	## the decompressor never reallocates mid-stream, and a returned list can
+	## be emptied with its capacity kept and passed back in to decompress the
+	## next stream with no fresh allocation.
+	decompress_into : List(U8), List(U8) -> Try(List(U8), [CorruptData, UnexpectedEnd])
+	decompress_into = |input, out| {
 		in_len = List.len(input)
 
-		var $out = List.with_capacity(in_len * 3)
+		var $out = out
 		var $in_next = 0.U64
 		var $bitbuf = 0.U64
 		var $bitsleft = 0.U64
