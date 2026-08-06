@@ -901,7 +901,7 @@ Inflate := [].{
 				$overread = r.overread
 			} else {}
 
-			var $entry = List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0
+			$entry = List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0
 			var $saved_bitbuf = $bitbuf
 			$bitbuf = $bitbuf.shr_zf_wrap($entry.to_u8_wrap())
 			$bitsleft = $bitsleft.minus_wrap($entry.to_u64())

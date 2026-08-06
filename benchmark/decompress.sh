@@ -59,13 +59,7 @@ done
 
 if [ ! -x "$build/dtime" ] || [ "$here/dtime.roc" -nt "$build/dtime" ]; then
 	echo "building dtime (roc --opt=speed)"
-	# roc build exits nonzero on warnings; judge success by the binary.
-	rm -f "$here/dtime"
-	(cd "$here" && "$roc" build --opt=speed dtime.roc) || true
-	if [ ! -x "$here/dtime" ]; then
-		echo "roc build failed" >&2
-		exit 1
-	fi
+	(cd "$here" && "$roc" build --opt=speed dtime.roc)
 	mv "$here/dtime" "$build/dtime"
 fi
 
