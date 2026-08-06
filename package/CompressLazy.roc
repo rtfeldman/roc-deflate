@@ -248,6 +248,212 @@ CompressLazy := [].{
 	bsr32 : U64 -> I64
 	bsr32 = |x| 31 - x.to_u32_wrap().count_leading_zero_bits().to_i64()
 
+	## Compress with the greedy parser, which always takes the longest match
+	## at the current position.
+	##
+	## Unlike the lazy parser this never looks ahead, so it has no reason to
+	## revise the minimum match length mid-block either.
+	compress_greedy : List(U8), Params -> Try(List(U8), [CompressBug])
+	compress_greedy = |input, params| {
+		in_end = List.len(input)
+		static = CompressLazy.build_static_codes(0)?
+
+		var $out = List.with_capacity(5 * ((in_end + CompressLazy.min_block_length - 1) // CompressLazy.min_block_length).max(1) + in_end)
+		var $bitbuf = 0.U64
+		var $bitcount = 0.U64
+		var $in_next = 0.U64
+		var $max_len = DeflateTables.max_match_len
+		var $nice_len = params.nice_match_length.min(DeflateTables.max_match_len)
+		var $mf = {
+			hash3: Matchfinder.init_table(32768),
+			hash4: Matchfinder.init_table(65536),
+			next_tab: Matchfinder.init_table(Matchfinder.window_size),
+			in_cur_base: 0.U64,
+			next_hash3: 0.U64,
+			next_hash4: 0.U64,
+		}
+		var $seqs = List.repeat(
+			{ litrunlen_and_length: 0.U32, offset: 0.U16, offset_slot: 0.U16 },
+			CompressLazy.seq_store_length + 1,
+		)
+
+		var $blocking = 1.U64
+		while $blocking == 1 {
+			in_block_begin = $in_next
+			in_max_block_end = CompressLazy.choose_max_block_end(
+				$in_next,
+				in_end,
+				CompressLazy.soft_max_block_length,
+			)
+			var $stats = {
+				new_observations: List.repeat(0.U32, CompressLazy.num_observation_types),
+				observations: List.repeat(0.U32, CompressLazy.num_observation_types),
+				num_new_observations: 0.U64,
+				num_observations: 0.U64,
+			}
+			var $freqs_litlen = List.repeat(0.U32, DeflateTables.num_litlen_syms)
+			var $freqs_offset = List.repeat(0.U32, DeflateTables.num_offset_syms)
+			var $seq_idx = 0.U64
+			var $litrunlen = 0.U32
+			min_len = CompressLazy.calculate_min_match_len(
+				input,
+				$in_next,
+				in_max_block_end - $in_next,
+				params.max_search_depth,
+			)?
+
+			var $in_block = 1.U64
+			while $in_block == 1 {
+				remaining = in_end - $in_next
+				if remaining < DeflateTables.max_match_len {
+					$max_len = remaining
+					$nice_len = $nice_len.min($max_len)
+				} else {
+				}
+
+				found = HcMatchfinder.longest_match(
+					$mf,
+					input,
+					$in_next,
+					min_len - 1,
+					$max_len,
+					$nice_len,
+					params.max_search_depth,
+				)?
+				$mf = found.state
+
+				if found.length >= min_len
+					and (found.length > DeflateTables.min_match_len or found.offset <= 4096) {
+					length_slot = DeflateTables.length_slot(found.length)
+					offset_slot = DeflateTables.offset_slot(found.offset)
+					litlen_sym = DeflateTables.first_len_sym + length_slot
+					$freqs_litlen = match List.set($freqs_litlen, litlen_sym, (List.get($freqs_litlen, litlen_sym) ?? 0) + 1) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
+					}
+					$freqs_offset = match List.set($freqs_offset, offset_slot, (List.get($freqs_offset, offset_slot) ?? 0) + 1) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
+					}
+					obs = 8 + if found.length >= 9 { 1 } else { 0 }
+					$stats = { ..$stats,
+						new_observations: match List.set($stats.new_observations, obs, (List.get($stats.new_observations, obs) ?? 0) + 1) {
+							Ok(next) => next
+							Err(_) => return Err(CompressBug)
+						},
+						num_new_observations: $stats.num_new_observations + 1,
+					}
+					$seqs = match List.set($seqs, $seq_idx, {
+						litrunlen_and_length: $litrunlen.bitwise_or(found.length.to_u32_wrap().shl_wrap(BlockOut.seq_length_shift)),
+						offset: found.offset.to_u16_wrap(),
+						offset_slot: offset_slot.to_u16_wrap(),
+					}) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
+					}
+					$seq_idx = $seq_idx + 1
+					$litrunlen = 0
+
+					$mf = HcMatchfinder.skip_bytes($mf, input, $in_next + 1, in_end, found.length - 1)?
+					$in_next = $in_next + found.length
+				} else {
+					lit = (List.get(input, $in_next) ?? 0).to_u64()
+					$freqs_litlen = match List.set($freqs_litlen, lit, (List.get($freqs_litlen, lit) ?? 0) + 1) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
+					}
+					obs = lit.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit.bitwise_and(1))
+					$stats = { ..$stats,
+						new_observations: match List.set($stats.new_observations, obs, (List.get($stats.new_observations, obs) ?? 0) + 1) {
+							Ok(next) => next
+							Err(_) => return Err(CompressBug)
+						},
+						num_new_observations: $stats.num_new_observations + 1,
+					}
+					$litrunlen = $litrunlen + 1
+					$in_next = $in_next + 1
+				}
+
+				if $in_next >= in_max_block_end or $seq_idx >= CompressLazy.seq_store_length {
+					$in_block = 0
+				} else if $stats.num_new_observations >= CompressLazy.observations_per_block_check
+					and $in_next - in_block_begin >= CompressLazy.min_block_length
+					and in_end - $in_next >= CompressLazy.min_block_length {
+					checked = CompressLazy.do_end_block_check($stats, $in_next - in_block_begin)?
+					$stats = checked.stats
+					if checked.should_end == 1 {
+						$in_block = 0
+					} else {
+					}
+				} else {
+				}
+			}
+
+			$seqs = match List.set($seqs, $seq_idx, {
+				litrunlen_and_length: $litrunlen,
+				offset: 0.U16,
+				offset_slot: 0.U16,
+			}) {
+				Ok(next) => next
+				Err(_) => return Err(CompressBug)
+			}
+			$freqs_litlen = match List.set($freqs_litlen, DeflateTables.end_of_block,
+				(List.get($freqs_litlen, DeflateTables.end_of_block) ?? 0) + 1) {
+				Ok(next) => next
+				Err(_) => return Err(CompressBug)
+			}
+			litlen_code = HuffmanEncode.make_code(
+				DeflateTables.num_litlen_syms,
+				BlockOut.max_litlen_codeword_len,
+				$freqs_litlen,
+				List.repeat(0.U8, DeflateTables.num_litlen_syms),
+				List.repeat(0.U32, DeflateTables.num_litlen_syms),
+			)?
+			offset_code = HuffmanEncode.make_code(
+				DeflateTables.num_offset_syms,
+				BlockOut.max_offset_codeword_len,
+				$freqs_offset,
+				List.repeat(0.U8, DeflateTables.num_offset_syms),
+				List.repeat(0.U32, DeflateTables.num_offset_syms),
+			)?
+
+			is_final = if $in_next == in_end { 1 } else { 0 }
+			flushed = BlockOut.flush_block({
+				out: $out,
+				bitbuf: $bitbuf,
+				bitcount: $bitcount,
+				input,
+				block_begin: in_block_begin,
+				block_length: $in_next - in_block_begin,
+				seqs: $seqs,
+				freqs_litlen: $freqs_litlen,
+				freqs_offset: $freqs_offset,
+				codes: {
+					litlen_lens: litlen_code.lens,
+					litlen_codewords: litlen_code.codewords,
+					offset_lens: offset_code.lens,
+					offset_codewords: offset_code.codewords,
+				},
+				static_codes: static,
+				is_final,
+			})?
+			$out = flushed.out
+			$bitbuf = flushed.bitbuf
+			$bitcount = flushed.bitcount
+
+			if $in_next == in_end {
+				$blocking = 0
+			} else {
+			}
+		}
+
+		if $bitcount > 0 {
+			$out = List.append($out, $bitbuf.to_u8_wrap())
+		} else {
+		}
+		Ok($out)
+	}
+
 	## Compress with the greedy or lazy parser.
 	##
 	## `params.lazy` selects how far ahead the parser looks before committing to
@@ -257,7 +463,7 @@ CompressLazy := [].{
 		in_end = List.len(input)
 		static = CompressLazy.build_static_codes(0)?
 
-		var $out = List.with_capacity(in_end + in_end // 4 + 1024)
+		var $out = List.with_capacity(5 * ((in_end + CompressLazy.min_block_length - 1) // CompressLazy.min_block_length).max(1) + in_end)
 		var $bitbuf = 0.U64
 		var $bitcount = 0.U64
 		var $in_next = 0.U64

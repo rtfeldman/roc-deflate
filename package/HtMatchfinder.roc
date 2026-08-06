@@ -1,0 +1,166 @@
+import Matchfinder
+
+## The hash-table matchfinder, ported from libdeflate's `ht_matchfinder.h`.
+##
+## Where the hash-chains matchfinder walks a chain, this keeps a fixed two
+## entries per hash bucket and looks at both, which bounds the work per
+## position without needing a depth counter. Only length-4 and longer matches
+## are found, since a bucket that small cannot afford to spend an entry on
+## length-3 candidates.
+HtMatchfinder := [].{
+
+	hash_order : U64
+	hash_order = 15
+
+	bucket_size : U64
+	bucket_size = 2
+
+	## Shortest match this matchfinder reports.
+	min_match_len : U64
+	min_match_len = 4
+
+	## Bytes that must be readable at the search position: four for the
+	## sequence itself and one more for the next position's hash.
+	required_nbytes : U64
+	required_nbytes = 5
+
+	## The two entries of each bucket sit next to each other, so a bucket is
+	## one cache line's worth of adjacent slots rather than two strided reads.
+	State : { hash_tab : List(I16), in_cur_base : U64, next_hash : U64 }
+
+	slide_window : State -> Try(State, [CompressBug])
+	slide_window = |state| {
+		hash_tab = Matchfinder.rebase_table(state.hash_tab)?
+		Ok({ ..state, hash_tab, in_cur_base: state.in_cur_base + Matchfinder.window_size })
+	}
+
+	Match : { state : State, length : U64, offset : U64 }
+
+	## Find the longest match at `in_next`, considering the two candidates in
+	## the position's hash bucket.
+	##
+	## The first entry is replaced by the current position and pushed down to
+	## the second, so the bucket always holds the two most recent positions
+	## with this hash. The copy happens even when the first candidate already
+	## reaches `nice_len`, which costs nothing and keeps the store off the
+	## branch.
+	longest_match : State, List(U8), U64, U64, U64 -> Try(Match, [CompressBug])
+	longest_match = |state0, input, in_next, max_len, nice_len| {
+		var $state = state0
+		if in_next - $state.in_cur_base == Matchfinder.window_size {
+			$state = HtMatchfinder.slide_window($state)?
+		} else {
+		}
+		in_base = $state.in_cur_base
+		cur_pos = in_next - in_base
+		cutoff = cur_pos.to_i32_wrap() - 32768
+
+		hash = $state.next_hash
+		next_hash = Matchfinder.lz_hash(U32.from_le_bytes(input, in_next + 1) ?? 0, HtMatchfinder.hash_order)
+		seq = U32.from_le_bytes(input, in_next) ?? 0
+
+		slot0 = hash * 2
+		cur_node0 = List.get($state.hash_tab, slot0) ?? 0
+		tab1 = match List.set($state.hash_tab, slot0, cur_pos.to_i16_wrap()) {
+			Ok(next) => next
+			Err(_) => return Err(CompressBug)
+		}
+
+		var $best_len = 0.U64
+		var $best_match_at = in_next
+
+		if cur_node0.to_i32() <= cutoff {
+			Ok({
+				state: { hash_tab: tab1, in_cur_base: in_base, next_hash },
+				length: 0,
+				offset: 0,
+			})
+		} else {
+			match0_at = Matchfinder.match_index(in_base, cur_node0)
+
+			# Push the displaced entry into the second slot.
+			cur_node1 = List.get(tab1, slot0 + 1) ?? 0
+			var $tab = match List.set(tab1, slot0 + 1, cur_node0) {
+				Ok(next) => next
+				Err(_) => return Err(CompressBug)
+			}
+
+			if (U32.from_le_bytes(input, match0_at) ?? 0) == seq {
+				$best_len = Matchfinder.lz_extend(input, in_next, match0_at, 4, max_len)
+				$best_match_at = match0_at
+				if cur_node1.to_i32() <= cutoff or $best_len >= nice_len {
+				} else {
+					match1_at = Matchfinder.match_index(in_base, cur_node1)
+					if (U32.from_le_bytes(input, match1_at) ?? 0) == seq
+						and (U32.from_le_bytes(input, match1_at + $best_len - 3) ?? 0)
+							== (U32.from_le_bytes(input, in_next + $best_len - 3) ?? 0) {
+						len = Matchfinder.lz_extend(input, in_next, match1_at, 4, max_len)
+						if len > $best_len {
+							$best_len = len
+							$best_match_at = match1_at
+						} else {
+						}
+					} else {
+					}
+				}
+			} else {
+				if cur_node1.to_i32() <= cutoff {
+				} else {
+					match1_at = Matchfinder.match_index(in_base, cur_node1)
+					if (U32.from_le_bytes(input, match1_at) ?? 0) == seq {
+						$best_len = Matchfinder.lz_extend(input, in_next, match1_at, 4, max_len)
+						$best_match_at = match1_at
+					} else {
+					}
+				}
+			}
+
+			Ok({
+				state: { hash_tab: $tab, in_cur_base: in_base, next_hash },
+				length: $best_len,
+				offset: in_next - $best_match_at,
+			})
+		}
+	}
+
+	## Insert `count` positions into the buckets without searching them.
+	skip_bytes : State, List(U8), U64, U64, U64 -> Try(State, [CompressBug])
+	skip_bytes = |state0, input, in_next0, in_end, count| {
+		var $state = state0
+		if count + HtMatchfinder.required_nbytes > in_end - in_next0 {
+			Ok($state)
+		} else {
+			var $in_next = in_next0
+			var $cur_pos = ($in_next - $state.in_cur_base).to_i64_wrap()
+			# One slide covers the whole run, since it is bounded by a window.
+			if $cur_pos + count.to_i64_wrap() - 1 >= Matchfinder.window_size.to_i64_wrap() {
+				$state = HtMatchfinder.slide_window($state)?
+				$cur_pos = $cur_pos - Matchfinder.window_size.to_i64_wrap()
+			} else {
+			}
+
+			var $hash = $state.next_hash
+			var $remaining = count
+			while $remaining > 0 {
+				slot0 = $hash * 2
+				first = List.get($state.hash_tab, slot0) ?? 0
+				tab1 = match List.set($state.hash_tab, slot0 + 1, first) {
+					Ok(next) => next
+					Err(_) => return Err(CompressBug)
+				}
+				$state = { ..$state,
+					hash_tab: match List.set(tab1, slot0, $cur_pos.to_i16_wrap()) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
+					},
+				}
+
+				$in_next = $in_next + 1
+				$hash = Matchfinder.lz_hash(U32.from_le_bytes(input, $in_next) ?? 0, HtMatchfinder.hash_order)
+				$cur_pos = $cur_pos + 1
+				$remaining = $remaining - 1
+			}
+			Ok({ ..$state, next_hash: $hash })
+		}
+	}
+}

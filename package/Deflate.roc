@@ -1,5 +1,6 @@
 import Inflate
 import CompressLazy
+import CompressFast
 
 ## DEFLATE (RFC 1951) compression and decompression in pure Roc, ported from
 ## libdeflate.
@@ -19,8 +20,75 @@ Deflate := [].{
 
 	## Compress bytes into a raw DEFLATE stream at the given level, 1 to 12.
 	compress : List(U8), U64 -> Try(List(U8), [CompressBug])
-	compress = |input, level|
-		CompressLazy.compress(input, Deflate.params_for(level))
+	compress = |input, level| {
+		# Inputs this short are not worth trying to compress; the higher the
+		# level, the more it is worth bothering.
+		max_passthrough = if level * 4 >= 55 { 0 } else { 55 - level * 4 }
+		if List.len(input) <= max_passthrough {
+			Deflate.store_uncompressed(input)
+		} else if level == 1 {
+			CompressFast.compress(input, 32)
+		} else {
+			params = Deflate.params_for(level)
+			if params.lazy == 0 {
+				CompressLazy.compress_greedy(input, params)
+			} else {
+				CompressLazy.compress(input, params)
+			}
+		}
+	}
+
+	## The largest a compressed stream can be, matching libdeflate's bound.
+	##
+	## The compressor never uses a compressed block where an uncompressed one
+	## would be cheaper, so the worst case is all uncompressed blocks: five
+	## bytes of header each, over blocks no shorter than the minimum block
+	## length.
+	compress_bound : U64 -> U64
+	compress_bound = |in_nbytes| {
+		max_blocks = ((in_nbytes + CompressLazy.min_block_length - 1) // CompressLazy.min_block_length).max(1)
+		5 * max_blocks + in_nbytes
+	}
+
+	## Emit the input as stored blocks, which is what the format requires even
+	## for empty input.
+	store_uncompressed : List(U8) -> Try(List(U8), [CompressBug])
+	store_uncompressed = |input| {
+		in_end = List.len(input)
+		var $out = List.with_capacity(in_end + 5 * (in_end // 65535 + 1))
+		if in_end == 0 {
+			$out = List.append($out, 1)
+			$out = match 0xFFFF0000.U64.append_le_bytes_to($out, 4) {
+				Ok(next) => next
+				Err(_) => return Err(CompressBug)
+			}
+			Ok($out)
+		} else {
+			var $in_next = 0.U64
+			var $storing = 1.U64
+			while $storing == 1 {
+				remaining = in_end - $in_next
+				len = remaining.min(65535)
+				bfinal = if remaining <= 65535 { 1.U64 } else { 0 }
+				$out = List.append($out, bfinal.to_u8_wrap())
+				$out = match len.append_le_bytes_to($out, 2) {
+					Ok(next) => next
+					Err(_) => return Err(CompressBug)
+				}
+				$out = match len.bitwise_not().append_le_bytes_to($out, 2) {
+					Ok(next) => next
+					Err(_) => return Err(CompressBug)
+				}
+				$out = List.append_sublist($out, input, { start: $in_next, len })
+				$in_next = $in_next + len
+				if $in_next == in_end {
+					$storing = 0
+				} else {
+				}
+			}
+			Ok($out)
+		}
+	}
 
 	## The search parameters libdeflate uses at each level.
 	params_for : U64 -> CompressLazy.Params
