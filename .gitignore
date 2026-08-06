@@ -15,3 +15,7 @@ benchmark/c/.build/
 
 # The catch-alls above ignore extensionless files, but this one must ship
 !LICENSE
+
+# Decompression benchmark caches (streams + builds), regenerated on demand
+benchmark/.streams/
+benchmark/.build/
