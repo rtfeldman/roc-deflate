@@ -45,20 +45,22 @@ See [examples](examples/) for a runnable program.
 
 ## Choosing a level
 
-You've got `Fastest`, `Balanced`, or `Smallest` and here's how they compare to `gzip` on the [Silesia corpus](http://mattmahoney.net/dc/silesia.html) (times are only meant to give an indication in relation to one another):
+Levels run from 0 (store the input uncompressed) to 12 (search hardest), and each one selects a parser: level 1 uses a hash-table matchfinder, 2 to 4 are greedy, 5 to 9 are lazy, and 10 to 12 find a minimum-cost path through every match the binary-tree matchfinder can see. Level 6 is the usual default.
 
-| Level      | Compressed size  | Ratio | Time   |
-| ---------- | ---------------- | ----- | ------ |
-| `Fastest`  | 85,524,903 bytes | 40.4% | ~4.7 s |
-| `Balanced` | 78,420,875 bytes | 37.0% | ~6.9 s |
-| `Smallest` | 76,929,989 bytes | 36.3% | ~15 s  |
-| gzip -1    | 77,366,708 bytes | 36.5% | ~1.3 s |
-| gzip -6    | 68,227,965 bytes | 32.2% | ~4.3 s |
-| gzip -9    | 67,631,990 bytes | 31.9% | ~10 s  |
+Because the output is byte-identical to libdeflate's, the compressed size at a given level is exactly libdeflate's compressed size; what differs is how long it takes to get there. Across the twelve files of the [Silesia corpus](http://mattmahoney.net/dc/silesia.html), median throughput over uncompressed bytes:
 
-There is plenty of room to improve both performance and compression. See this as a starting point 👍
+| Level | Parser       | libdeflate | roc-deflate | libdeflate is |
+| ----- | ------------ | ---------- | ----------- | ------------- |
+| 1     | hash table   | 278 MB/s   | 65 MB/s     | 304% faster   |
+| 6     | lazy         | 101 MB/s   | 20 MB/s     | 401% faster   |
+| 9     | lazy2        | 46 MB/s    | 14 MB/s     | 146% faster   |
+| 10    | near-optimal | 15 MB/s    | 5.5 MB/s    | 174% faster   |
+| 11    | near-optimal | 8.9 MB/s   | 4.1 MB/s    | 136% faster   |
+| 12    | near-optimal | 6.7 MB/s   | 3.6 MB/s    | 121% faster   |
 
-Try it on your machine: `nix develop -c ./benchmark/run.roc` (downloads and verifies the corpus on first run).
+The gap narrows as the level rises, since the deeper searches amortize the per-position overhead. There is plenty of room left. See this as a starting point 👍
+
+Reproduce it on your machine with `./benchmark/compress.sh [level]`, which downloads and verifies the corpus on first run, then runs both engines under mimalloc, compressing into a caller-allocated buffer sized by libdeflate's own bound, and compares the two streams byte for byte. `./benchmark/decompress.sh` does the same for the decompressor.
 
 ## Testing
 
