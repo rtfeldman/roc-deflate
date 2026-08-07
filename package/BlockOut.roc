@@ -283,6 +283,7 @@ BlockOut := [].{
 		bitbuf : U64,
 		bitcount : U64,
 		seqs : List(Sequence),
+		items : List(U32),
 		litlen_lens : List(U8),
 		litlen_codewords : List(U32),
 		offset_lens : List(U8),
@@ -299,8 +300,14 @@ BlockOut := [].{
 	## which is what lets the writer commit to a type and then emit the whole
 	## block without re-checking anything. Ties prefer uncompressed, then
 	## static, then dynamic, as libdeflate does.
-	flush_block : List(U8), U64, U64, List(U8), U64, U64, List(BlockOut.Sequence), List(U32), List(U32), List(U8), List(U32), List(U8), List(U32), List(U8), List(U32), List(U8), List(U32), U64 -> Try(FlushResult, [CompressBug])
-	flush_block = |out_0, bitbuf_0, bitcount_0, input, block_begin, block_length_0, seqs, freqs_litlen, freqs_offset, litlen_lens, litlen_codewords, offset_lens, offset_codewords, s_litlen_lens, s_litlen_codewords, s_offset_lens, s_offset_codewords, is_final| {
+	##
+	## The chosen literals and matches arrive one of two ways. The greedy and
+	## lazy parsers hand over `seqs`, runs of literals each followed by a match,
+	## with the literals themselves read back out of the input. The near-optimal
+	## parser hands over `items`, one packed entry per position along its chosen
+	## path; `use_items` selects between them.
+	flush_block : List(U8), U64, U64, List(U8), U64, U64, List(BlockOut.Sequence), List(U32), List(U32), List(U8), List(U32), List(U8), List(U32), List(U8), List(U32), List(U8), List(U32), List(U32), U64, U64 -> Try(FlushResult, [CompressBug])
+	flush_block = |out_0, bitbuf_0, bitcount_0, input, block_begin, block_length_0, seqs, freqs_litlen, freqs_offset, litlen_lens, litlen_codewords, offset_lens, offset_codewords, s_litlen_lens, s_litlen_codewords, s_offset_lens, s_offset_codewords, items, use_items, is_final| {
 		precode = BlockOut.precompute_huffman_header(litlen_lens, offset_lens)?
 
 		# Cost of the dynamic Huffman header: the three length counts, the
@@ -412,6 +419,7 @@ BlockOut := [].{
 				bitbuf: $bitbuf,
 				bitcount: $bitcount,
 				seqs,
+				items,
 				litlen_lens,
 				litlen_codewords,
 				offset_lens,
@@ -505,8 +513,44 @@ BlockOut := [].{
 			full_codewords = full.codewords
 			full_lens = full.lens
 
+			var $item_at = if use_items == 1 { 0.U64 } else { block_length }
+			while $item_at != block_length {
+				item = List.get(items, $item_at) ?? 0
+				length = item.bitwise_and(0x1FF).to_u64()
+				payload = item.shr_zf_wrap(9).to_u64()
+				if length == 1 {
+					# A length of one marks a literal, whose byte the item
+					# carries where a match would carry its offset.
+					$bitbuf = $bitbuf.bitwise_or((List.get(w_litlen_codewords, payload) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
+					$bitcount = $bitcount + (List.get(w_litlen_lens, payload) ?? 0).to_u64()
+					n = $bitcount.shr_zf_wrap(3)
+					$out = match $bitbuf.append_le_bytes_to($out, n.to_u8_wrap()) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
+					}
+					$bitbuf = $bitbuf.shr_zf_wrap(n.shl_wrap(3).to_u8_wrap())
+					$bitcount = $bitcount.bitwise_and(7)
+				} else {
+					offset_slot = DeflateTables.offset_slot(payload)
+					$bitbuf = $bitbuf.bitwise_or((List.get(full_codewords, length) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
+					$bitcount = $bitcount + (List.get(full_lens, length) ?? 0).to_u64()
+					$bitbuf = $bitbuf.bitwise_or((List.get(w_offset_codewords, offset_slot) ?? 0).to_u64().shl_wrap($bitcount.to_u8_wrap()))
+					$bitcount = $bitcount + (List.get(w_offset_lens, offset_slot) ?? 0).to_u64()
+					$bitbuf = $bitbuf.bitwise_or((payload - (List.get(DeflateTables.offset_slot_base, offset_slot) ?? 0).to_u64()).shl_wrap($bitcount.to_u8_wrap()))
+					$bitcount = $bitcount + (List.get(DeflateTables.extra_offset_bits, offset_slot) ?? 0).to_u64()
+					n = $bitcount.shr_zf_wrap(3)
+					$out = match $bitbuf.append_le_bytes_to($out, n.to_u8_wrap()) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
+					}
+					$bitbuf = $bitbuf.shr_zf_wrap(n.shl_wrap(3).to_u8_wrap())
+					$bitcount = $bitcount.bitwise_and(7)
+				}
+				$item_at = $item_at + length
+			}
+
 			var $seq_idx = 0.U64
-			var $writing = True
+			var $writing = use_items == 0
 			while $writing {
 				seq = List.get(seqs, $seq_idx) ?? { litrunlen_and_length: 0, offset: 0, offset_slot: 0 }
 				var $litrunlen = seq.litrunlen_and_length.bitwise_and(BlockOut.seq_litrunlen_mask).to_u64()
@@ -608,6 +652,7 @@ BlockOut := [].{
 				bitbuf: $bitbuf,
 				bitcount: $bitcount,
 				seqs,
+				items,
 				litlen_lens,
 				litlen_codewords,
 				offset_lens,

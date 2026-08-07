@@ -1,6 +1,7 @@
 import Inflate
 import CompressLazy
 import CompressFast
+import CompressOptimal
 
 ## DEFLATE (RFC 1951) compression and decompression in pure Roc, ported from
 ## libdeflate.
@@ -23,11 +24,21 @@ Deflate := [].{
 	compress = |input, level| {
 		# Inputs this short are not worth trying to compress; the higher the
 		# level, the more it is worth bothering.
-		max_passthrough = if level * 4 >= 55 { 0 } else { 55 - level * 4 }
+		# Level 0 never compresses; above it, the higher the level the more
+		# it is worth bothering with a very short input.
+		max_passthrough = if level == 0 {
+			18446744073709551615
+		} else if level * 4 >= 55 {
+			0
+		} else {
+			55 - level * 4
+		}
 		if List.len(input) <= max_passthrough {
 			Deflate.store_uncompressed(input)
 		} else if level == 1 {
 			CompressFast.compress(input, 32)
+		} else if level >= 10 {
+			CompressOptimal.compress(input, Deflate.optimal_params_for(level))
 		} else {
 			params = Deflate.params_for(level)
 			if params.lazy == 0 {
@@ -109,6 +120,42 @@ Deflate := [].{
 			{ max_search_depth: 300, nice_match_length: 258, lazy: 2 }
 		} else {
 			{ max_search_depth: 600, nice_match_length: 258, lazy: 2 }
+		}
+
+	## The near-optimal parser's parameters at each of the levels that use it.
+	##
+	## As well as searching harder, the higher levels spend more optimization
+	## passes on each block, keep going for smaller improvements, and are
+	## willing to optimize the static-Huffman alternative for longer blocks.
+	optimal_params_for : U64 -> CompressOptimal.Params
+	optimal_params_for = |level|
+		if level == 10 {
+			{
+				max_search_depth: 35,
+				nice_match_length: 75,
+				max_optim_passes: 2,
+				min_improvement_to_continue: 32,
+				min_bits_to_use_nonfinal_path: 32,
+				max_len_to_optimize_static_block: 0,
+			}
+		} else if level == 11 {
+			{
+				max_search_depth: 100,
+				nice_match_length: 150,
+				max_optim_passes: 4,
+				min_improvement_to_continue: 16,
+				min_bits_to_use_nonfinal_path: 16,
+				max_len_to_optimize_static_block: 1000,
+			}
+		} else {
+			{
+				max_search_depth: 300,
+				nice_match_length: 258,
+				max_optim_passes: 10,
+				min_improvement_to_continue: 1,
+				min_bits_to_use_nonfinal_path: 1,
+				max_len_to_optimize_static_block: 10000,
+			}
 		}
 
 	## Decompress a raw DEFLATE stream.

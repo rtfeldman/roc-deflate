@@ -185,6 +185,8 @@ CompressFast := [].{
 				$s_litlen_codewords,
 				$s_offset_lens,
 				$s_offset_codewords,
+				[],
+				0,
 				is_final,
 			)?
 			$out = flushed.out
