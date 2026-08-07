@@ -2,8 +2,10 @@
 
 DEFLATE (RFC 1951) compression and decompression in pure Roc.
 
-- `Deflate.compress` produces a raw DEFLATE stream any inflate implementation can read, using hash-chain LZ77 with lazy matching at one of three effort levels: `Fastest`, `Balanced`, or `Smallest`.
+- `Deflate.compress` produces a raw DEFLATE stream any inflate implementation can read, at a level from 0 to 12.
 - `Deflate.decompress` reads all three DEFLATE block types (stored, fixed Huffman, dynamic Huffman), so it handles streams produced by `zlib`, `gzip`, and ZIP tools.
+
+Both are ports of [libdeflate](https://github.com/ebiggers/libdeflate), and the compressor is faithful enough that it produces byte-identical output to libdeflate at every level.
 
 View the API documentation at [https://niclas-ahden.github.io/roc-deflate/](https://niclas-ahden.github.io/roc-deflate/).
 
@@ -21,7 +23,7 @@ import deflate.Deflate
 main! = |_| {
     original = "Bootcut Jeans, salmon shirt, I have a skin routine and my elbows hurt.".to_utf8()
 
-    compressed = Deflate.compress(original, Balanced)
+    compressed = Deflate.compress(original, 6) ? |_| Exit(1)
     Stdout.line!("Compressed ${original.len().to_str()} bytes to ${compressed.len().to_str()}")?
 
     match Deflate.decompress(compressed) {
@@ -63,7 +65,7 @@ Try it on your machine: `nix develop -c ./benchmark/run.roc` (downloads and veri
 `./tests.roc` (or `nix develop -c ./tests.roc` to get `gzip` and coreutils from the flake instead of the host) runs:
 
 - the package's `expect` blocks, which round-trip our compress and decompress against each other,
-- gzip interop in both directions on a deterministic 1 MB generated-text corpus: every level's output must decode byte-identically under real `gzip`, and real `gzip`'s streams at `-1`/`-6`/`-9` (differing block structures) must inflate byte-identically under our decompressor, and
+- gzip interop in both directions on a deterministic 1 MB generated-text corpus: our output at levels 1, 6, 9, and 12 must decode byte-identically under real `gzip`, and real `gzip`'s streams at `-1`/`-6`/`-9` (differing block structures) must inflate byte-identically under our decompressor, and
 - a compression-ratio gate on the [Canterbury corpus](tests/corpus/): each level's output must stay within a ratchet ceiling, so a change that worsens compression fails the build.
 
 Quite nice!

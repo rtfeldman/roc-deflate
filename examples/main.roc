@@ -9,7 +9,7 @@ import deflate.Deflate
 main! = |_| {
 	original = "Bootcut Jeans, salmon shirt, I have a skin routine and my elbows hurt.".to_utf8()
 
-	compressed = Deflate.compress(original, Balanced)
+	compressed = Deflate.compress(original, 6) ? |_| Exit(1)
 	Stdout.line!("Compressed ${original.len().to_str()} bytes to ${compressed.len().to_str()}")?
 
 	match Deflate.decompress(compressed) {

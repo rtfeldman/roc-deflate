@@ -42,9 +42,10 @@ main! = |args| {
 	Stdout.line!("corpus: ${corpus.len().to_str()} bytes")?
 
 	Stdout.line!("== forward: real gzip decodes our streams")?
-	check_forward!(corpus, tmp, "fastest", Fastest)?
-	check_forward!(corpus, tmp, "balanced", Balanced)?
-	check_forward!(corpus, tmp, "smallest", Smallest)?
+	check_forward!(corpus, tmp, "level 1", 1)?
+	check_forward!(corpus, tmp, "level 6", 6)?
+	check_forward!(corpus, tmp, "level 9", 9)?
+	check_forward!(corpus, tmp, "level 12", 12)?
 
 	Stdout.line!("== reverse: we inflate real gzip's streams")?
 	check_reverse!(corpus, corpus_os, "-1")?
@@ -58,9 +59,9 @@ main! = |args| {
 
 # Compress with our encoder, wrap in a gzip member, and confirm real gzip
 # decodes it back to the exact corpus.
-check_forward! : List(U8), Path.Path, Str, [Fastest, Balanced, Smallest] => Try({}, [Exit(I32), StdoutErr(IOErr), ..])
+check_forward! : List(U8), Path.Path, Str, U64 => Try({}, [Exit(I32), StdoutErr(IOErr), ..])
 check_forward! = |corpus, tmp, name, level| {
-	deflated = Deflate.compress(corpus, level)
+	deflated = Deflate.compress(corpus, level) ? |_| Exit(1)
 	container = gzip_wrap(deflated, Crc32.checksum(corpus), corpus.len())
 	gz_path = tmp.join("roc_deflate_harness_ours.gz")
 	Path.write_bytes!(gz_path, container) ? |_| Exit(1)
