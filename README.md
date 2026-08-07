@@ -66,8 +66,8 @@ Reproduce it on your machine with `./benchmark/compress.sh [level]`, which downl
 
 `./tests.roc` (or `nix develop -c ./tests.roc` to get `gzip` and coreutils from the flake instead of the host) runs:
 
-- the package's `expect` blocks, which round-trip our compress and decompress against each other,
-- gzip interop in both directions on a deterministic 1 MB generated-text corpus: our output at levels 1, 6, 9, and 12 must decode byte-identically under real `gzip`, and real `gzip`'s streams at `-1`/`-6`/`-9` (differing block structures) must inflate byte-identically under our decompressor, and
+- gzip interop in both directions on a deterministic 1 MB generated-text corpus: our output at levels 1, 6, 9, and 12 must decode byte-identically under real `gzip`, and real `gzip`'s streams at `-1`/`-6`/`-9` (differing block structures) must inflate byte-identically under our decompressor,
+- a round-trip of that same corpus through our own compressor and decompressor at every level from 0 to 12, so no parser goes unexercised, and
 - a compression-ratio gate on the [Canterbury corpus](tests/corpus/): each level's output must stay within a ratchet ceiling, so a change that worsens compression fails the build.
 
 Quite nice!

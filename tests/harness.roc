@@ -52,9 +52,33 @@ main! = |args| {
 	check_reverse!(corpus, corpus_os, "-6")?
 	check_reverse!(corpus, corpus_os, "-9")?
 
+	# Every level, including the ones gzip interop above does not cover. Each
+	# level selects a different parser or a different search effort, so a level
+	# that is never exercised is a parser that is never exercised.
+	Stdout.line!("== round-trip through our own decompressor, every level")?
+	var $level = 0.U64
+	while $level <= 12 {
+		check_roundtrip!(corpus, $level)?
+		$level = $level + 1
+	}
+
 	Path.delete!(corpus_path) ? |_| Exit(1)
 	Stdout.line!("All interop checks passed")?
 	Ok({})
+}
+
+# Compress and then decompress with our own code, and confirm the bytes come
+# back unchanged.
+check_roundtrip! : List(U8), U64 => Try({}, [Exit(I32), StdoutErr(IOErr), ..])
+check_roundtrip! = |corpus, level| {
+	deflated = Deflate.compress(corpus, level) ? |_| Exit(1)
+	back = Deflate.decompress(deflated) ? |_| Exit(1)
+	if back == corpus {
+		Stdout.line!("  level ${level.to_str()}: round-tripped ${deflated.len().to_str()} bytes")
+	} else {
+		Stdout.line!("  level ${level.to_str()}: MISMATCH")?
+		Err(Exit(1))
+	}
 }
 
 # Compress with our encoder, wrap in a gzip member, and confirm real gzip

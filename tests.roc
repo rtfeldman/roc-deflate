@@ -1,10 +1,11 @@
 #!/usr/bin/env roc
-## All tests: the package's `expect` blocks, then gzip interop in both
-## directions, then the compression-ratio gate.
+## All tests: gzip interop in both directions and a round-trip at every level,
+## then the compression-ratio gate.
 ##
 ## tests/harness.roc generates a corpus in memory, drives real gzip through the
 ## platform's Cmd, and compares bytes in-process. Forward proves our streams
-## decode under real gzip; reverse proves we inflate real gzip's streams.
+## decode under real gzip; reverse proves we inflate real gzip's streams; the
+## round-trip covers every level, including the ones gzip interop skips.
 ## tests/ratios.roc compresses the committed Canterbury corpus and fails on a
 ## ratio regression.
 ##
@@ -22,10 +23,7 @@ import pf.Cmd
 import pf.OsStr exposing [OsStr]
 
 main! = |_| {
-	Stdout.line!("== unit tests")?
-	run!("roc", ["test", "package/main.roc"])?
-
-	Stdout.line!("== interop against real gzip (compiled --opt=speed)")?
+	Stdout.line!("== interop and round-trips (compiled --opt=speed)")?
 	build!("tests/harness.roc", "tests/harness")?
 	run!("./tests/harness", [])?
 
