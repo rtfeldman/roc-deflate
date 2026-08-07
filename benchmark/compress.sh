@@ -61,6 +61,11 @@ else
 			break
 		fi
 	done < <(find "$here/ctime.roc" "$here/../package" -name '*.roc')
+	# A newer compiler also invalidates the binary.
+	roc_bin="$(command -v "$roc" || true)"
+	if [ -n "$roc_bin" ] && [ "$roc_bin" -nt "$build/ctime" ]; then
+		needs_build=1
+	fi
 fi
 if [ "$needs_build" -eq 1 ]; then
 	echo "building ctime (roc --opt=speed)"

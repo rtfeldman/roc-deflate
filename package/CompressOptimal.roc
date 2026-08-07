@@ -661,12 +661,10 @@ CompressOptimal := [].{
 		var $new_match_len_freqs = List.repeat(0.U32, DeflateTables.max_match_len + 1)
 		var $prev_observations = List.repeat(0.U32, CompressLazy.num_observation_types)
 		var $prev_num_observations = 0.U64
-		var $stats = {
-			new_observations: List.repeat(0.U32, CompressLazy.num_observation_types),
-			observations: List.repeat(0.U32, CompressLazy.num_observation_types),
-			num_new_observations: 0.U64,
-			num_observations: 0.U64,
-		}
+		var $new_observations = List.repeat(0.U32, CompressLazy.num_observation_types)
+		var $observations = List.repeat(0.U32, CompressLazy.num_observation_types)
+		var $num_new_observations = 0.U64
+		var $num_observations = 0.U64
 
 		# The only-literals alternative needs a one-entry sequence list, which
 		# says "this many literals, then the end of the block".
@@ -769,13 +767,11 @@ CompressOptimal := [].{
 				if $in_next >= $next_observation {
 					if $best_len >= min_len {
 						obs = 8 + if $best_len >= 9 { 1 } else { 0 }
-						$stats = { ..$stats,
-							new_observations: match List.set($stats.new_observations, obs, (List.get($stats.new_observations, obs) ?? 0) + 1) {
-								Ok(next) => next
-								Err(_) => return Err(CompressBug)
-							},
-							num_new_observations: $stats.num_new_observations + 1,
+						$new_observations = match List.set($new_observations, obs, (List.get($new_observations, obs) ?? 0) + 1) {
+							Ok(next) => next
+							Err(_) => return Err(CompressBug)
 						}
+						$num_new_observations = $num_new_observations + 1
 						$next_observation = $in_next + $best_len
 						$new_match_len_freqs = match List.set($new_match_len_freqs, $best_len,
 							(List.get($new_match_len_freqs, $best_len) ?? 0) + 1) {
@@ -785,13 +781,11 @@ CompressOptimal := [].{
 					} else {
 						lit = (List.get(input, $in_next) ?? 0).to_u64()
 						obs = lit.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit.bitwise_and(1))
-						$stats = { ..$stats,
-							new_observations: match List.set($stats.new_observations, obs, (List.get($stats.new_observations, obs) ?? 0) + 1) {
-								Ok(next) => next
-								Err(_) => return Err(CompressBug)
-							},
-							num_new_observations: $stats.num_new_observations + 1,
+						$new_observations = match List.set($new_observations, obs, (List.get($new_observations, obs) ?? 0) + 1) {
+							Ok(next) => next
+							Err(_) => return Err(CompressBug)
 						}
+						$num_new_observations = $num_new_observations + 1
 						$next_observation = $in_next + 1
 					}
 				} else {
@@ -868,15 +862,18 @@ CompressOptimal := [].{
 
 				if $in_next >= in_max_block_end or $cache_ptr >= CompressOptimal.match_cache_length {
 					$in_block = 0
-				} else if $stats.num_new_observations >= CompressLazy.observations_per_block_check
+				} else if $num_new_observations >= CompressLazy.observations_per_block_check
 					and $in_next - $in_block_begin >= CompressLazy.min_block_length
 					and in_end - $in_next >= CompressLazy.min_block_length {
-					checked = CompressLazy.do_end_block_check($stats, $in_next - $in_block_begin)?
-					$stats = checked.stats
-					if checked.should_end == 1 {
+					if CompressLazy.do_end_block_check($new_observations, $observations, $num_new_observations, $num_observations, $in_next - $in_block_begin) == 1 {
 						$change_detected = 1
 						$in_block = 0
 					} else {
+						ms = CompressLazy.merge_observations($new_observations, $observations, $num_new_observations, $num_observations)?
+						$new_observations = ms.new_observations
+						$observations = ms.observations
+						$num_new_observations = ms.num_new_observations
+						$num_observations = ms.num_observations
 						merged = CompressOptimal.merge_match_len_freqs($match_len_freqs, $new_match_len_freqs)?
 						$match_len_freqs = merged.total
 						$new_match_len_freqs = merged.fresh
@@ -911,7 +908,11 @@ CompressOptimal := [].{
 				merged = CompressOptimal.merge_match_len_freqs($match_len_freqs, $new_match_len_freqs)?
 				$match_len_freqs = merged.total
 				$new_match_len_freqs = merged.fresh
-				$stats = CompressLazy.merge_observations($stats)?
+				ms = CompressLazy.merge_observations($new_observations, $observations, $num_new_observations, $num_observations)?
+				$new_observations = ms.new_observations
+				$observations = ms.observations
+				$num_new_observations = ms.num_new_observations
+				$num_observations = ms.num_observations
 			}
 			block_length = $block_end - $in_block_begin
 			is_first = if $in_block_begin == 0 { 1.U64 } else { 0 }
@@ -992,8 +993,8 @@ CompressOptimal := [].{
 						defaults.len_sym_cost,
 						$prev_observations,
 						$prev_num_observations,
-						$stats.observations,
-						$stats.num_observations,
+						$observations,
+						$num_observations,
 						$cost_literal,
 						$cost_length,
 						$cost_offset_slot,
@@ -1209,8 +1210,8 @@ CompressOptimal := [].{
 
 			# Carry the statistics into the next block: what this block saw
 			# becomes what the next block compares itself against.
-			$prev_observations = $stats.observations
-			$prev_num_observations = $stats.num_observations
+			$prev_observations = $observations
+			$prev_num_observations = $num_observations
 
 			if $change_detected == 1 and $have_prev_end_block_check == 1 {
 				# Move the positions that were rewound back to the front of the
@@ -1232,20 +1233,16 @@ CompressOptimal := [].{
 				$cache_ptr = $rewound
 				# Clear the statistics for the block just flushed, keeping the
 				# ones already gathered for the block now starting.
-				$stats = { ..$stats,
-					observations: List.repeat(0.U32, CompressLazy.num_observation_types),
-					num_observations: 0,
-				}
+				$observations = List.repeat(0.U32, CompressLazy.num_observation_types)
+				$num_observations = 0
 				$match_len_freqs = List.repeat(0.U32, DeflateTables.max_match_len + 1)
 				$in_block_begin = $block_end
 			} else {
 				$cache_ptr = 0
-				$stats = {
-					new_observations: List.repeat(0.U32, CompressLazy.num_observation_types),
-					observations: List.repeat(0.U32, CompressLazy.num_observation_types),
-					num_new_observations: 0,
-					num_observations: 0,
-				}
+				$new_observations = List.repeat(0.U32, CompressLazy.num_observation_types)
+				$observations = List.repeat(0.U32, CompressLazy.num_observation_types)
+				$num_new_observations = 0
+				$num_observations = 0
 				$new_match_len_freqs = List.repeat(0.U32, DeflateTables.max_match_len + 1)
 				$match_len_freqs = List.repeat(0.U32, DeflateTables.max_match_len + 1)
 				$in_block_begin = $in_next

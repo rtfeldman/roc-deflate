@@ -57,7 +57,24 @@ for f in "${files[@]}"; do
 	fi
 done
 
-if [ ! -x "$build/dtime" ] || [ "$here/dtime.roc" -nt "$build/dtime" ]; then
+# Rebuild when the harness, any package source, or the compiler itself is
+# newer than the binary.
+needs_build=0
+if [ ! -x "$build/dtime" ]; then
+	needs_build=1
+else
+	while IFS= read -r src; do
+		if [ "$src" -nt "$build/dtime" ]; then
+			needs_build=1
+			break
+		fi
+	done < <(find "$here/dtime.roc" "$here/../package" -name '*.roc')
+	roc_bin="$(command -v "$roc" || true)"
+	if [ -n "$roc_bin" ] && [ "$roc_bin" -nt "$build/dtime" ]; then
+		needs_build=1
+	fi
+fi
+if [ "$needs_build" -eq 1 ]; then
 	echo "building dtime (roc --opt=speed)"
 	(cd "$here" && "$roc" build --opt=speed dtime.roc)
 	mv "$here/dtime" "$build/dtime"

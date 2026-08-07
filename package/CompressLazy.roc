@@ -132,52 +132,54 @@ CompressLazy := [].{
 			in_block_begin + soft_max_len
 		}
 
-	Stats : {
-		new_observations : List(U32),
-		observations : List(U32),
-		num_new_observations : U64,
-		num_observations : U64,
-	}
-
 	## Decide whether the symbols seen recently differ enough from those seen
 	## earlier in the block to be worth a new Huffman code.
 	##
 	## The test is the sum of absolute differences between the two
 	## distributions, scaled so no division is needed, against a cutoff that
 	## grows with block length. Very short blocks pay a surcharge, since their
-	## header is a larger share of their cost.
-	do_end_block_check : Stats, U64 -> Try({ stats : Stats, should_end : U64 }, [CompressBug])
-	do_end_block_check = |stats, block_length| {
-		if stats.num_observations > 0 {
+	## header is a larger share of their cost. This only reads the counts; a
+	## caller that decides to continue the block folds them with
+	## `merge_observations` itself.
+	do_end_block_check : List(U32), List(U32), U64, U64, U64 -> U64
+	do_end_block_check = |new_observations, observations, num_new_observations, num_observations, block_length| {
+		if num_observations > 0 {
 			var $total_delta = 0.U64
 			var $i = 0.U64
 			while $i < CompressLazy.num_observation_types {
-				expected = (List.get(stats.observations, $i) ?? 0).to_u64() * stats.num_new_observations
-				actual = (List.get(stats.new_observations, $i) ?? 0).to_u64() * stats.num_observations
+				expected = (List.get(observations, $i) ?? 0).to_u64() * num_new_observations
+				actual = (List.get(new_observations, $i) ?? 0).to_u64() * num_observations
 				delta = if actual > expected { actual - expected } else { expected - actual }
 				$total_delta = $total_delta + delta
 				$i = $i + 1
 			}
-			num_items = stats.num_observations + stats.num_new_observations
-			var $cutoff = stats.num_new_observations * 200 // 512 * stats.num_observations
+			num_items = num_observations + num_new_observations
+			var $cutoff = num_new_observations * 200 // 512 * num_observations
 			if block_length < 10000 and num_items < 8192 {
 				$cutoff = $cutoff + $cutoff * (8192 - num_items) // 8192
 			} else {
 			}
-			if $total_delta + (block_length // 4096) * stats.num_observations >= $cutoff {
-				Ok({ stats, should_end: 1 })
+			if $total_delta + (block_length // 4096) * num_observations >= $cutoff {
+				1
 			} else {
-				Ok({ stats: CompressLazy.merge_observations(stats)?, should_end: 0 })
+				0
 			}
 		} else {
-			Ok({ stats: CompressLazy.merge_observations(stats)?, should_end: 0 })
+			0
 		}
 	}
 
-	merge_observations : Stats -> Try(Stats, [CompressBug])
-	merge_observations = |stats| {
-		var $observations = stats.observations
-		var $new_observations = stats.new_observations
+	MergedObservations : {
+		new_observations : List(U32),
+		observations : List(U32),
+		num_new_observations : U64,
+		num_observations : U64,
+	}
+
+	merge_observations : List(U32), List(U32), U64, U64 -> Try(MergedObservations, [CompressBug])
+	merge_observations = |new_observations_0, observations_0, num_new_observations, num_observations| {
+		var $observations = observations_0
+		var $new_observations = new_observations_0
 		var $i = 0.U64
 		while $i < CompressLazy.num_observation_types {
 			merged = (List.get($observations, $i) ?? 0) + (List.get($new_observations, $i) ?? 0)
@@ -194,7 +196,7 @@ CompressLazy := [].{
 		Ok({
 			observations: $observations,
 			new_observations: $new_observations,
-			num_observations: stats.num_observations + stats.num_new_observations,
+			num_observations: num_observations + num_new_observations,
 			num_new_observations: 0,
 		})
 	}
@@ -290,12 +292,10 @@ CompressLazy := [].{
 				in_end,
 				CompressLazy.soft_max_block_length,
 			)
-			var $stats = {
-				new_observations: List.repeat(0.U32, CompressLazy.num_observation_types),
-				observations: List.repeat(0.U32, CompressLazy.num_observation_types),
-				num_new_observations: 0.U64,
-				num_observations: 0.U64,
-			}
+			var $new_observations = List.repeat(0.U32, CompressLazy.num_observation_types)
+			var $observations = List.repeat(0.U32, CompressLazy.num_observation_types)
+			var $num_new_observations = 0.U64
+			var $num_observations = 0.U64
 			var $freqs_litlen = List.repeat(0.U32, DeflateTables.num_litlen_syms)
 			var $freqs_offset = List.repeat(0.U32, DeflateTables.num_offset_syms)
 			var $seq_idx = 0.U64
@@ -351,13 +351,11 @@ CompressLazy := [].{
 						Err(_) => return Err(CompressBug)
 					}
 					obs = 8 + if found.length >= 9 { 1 } else { 0 }
-					$stats = { ..$stats,
-						new_observations: match List.set($stats.new_observations, obs, (List.get($stats.new_observations, obs) ?? 0) + 1) {
-							Ok(next) => next
-							Err(_) => return Err(CompressBug)
-						},
-						num_new_observations: $stats.num_new_observations + 1,
+					$new_observations = match List.set($new_observations, obs, (List.get($new_observations, obs) ?? 0) + 1) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
 					}
+					$num_new_observations = $num_new_observations + 1
 					$seqs = match List.set($seqs, $seq_idx, {
 						litrunlen_and_length: $litrunlen.bitwise_or(found.length.to_u32_wrap().shl_wrap(BlockOut.seq_length_shift)),
 						offset: found.offset.to_u16_wrap(),
@@ -384,27 +382,28 @@ CompressLazy := [].{
 						Err(_) => return Err(CompressBug)
 					}
 					obs = lit.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit.bitwise_and(1))
-					$stats = { ..$stats,
-						new_observations: match List.set($stats.new_observations, obs, (List.get($stats.new_observations, obs) ?? 0) + 1) {
-							Ok(next) => next
-							Err(_) => return Err(CompressBug)
-						},
-						num_new_observations: $stats.num_new_observations + 1,
+					$new_observations = match List.set($new_observations, obs, (List.get($new_observations, obs) ?? 0) + 1) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
 					}
+					$num_new_observations = $num_new_observations + 1
 					$litrunlen = $litrunlen + 1
 					$in_next = $in_next + 1
 				}
 
 				if $in_next >= in_max_block_end or $seq_idx >= CompressLazy.seq_store_length {
 					$in_block = 0
-				} else if $stats.num_new_observations >= CompressLazy.observations_per_block_check
+				} else if $num_new_observations >= CompressLazy.observations_per_block_check
 					and $in_next - in_block_begin >= CompressLazy.min_block_length
 					and in_end - $in_next >= CompressLazy.min_block_length {
-					checked = CompressLazy.do_end_block_check($stats, $in_next - in_block_begin)?
-					$stats = checked.stats
-					if checked.should_end == 1 {
+					if CompressLazy.do_end_block_check($new_observations, $observations, $num_new_observations, $num_observations, $in_next - in_block_begin) == 1 {
 						$in_block = 0
 					} else {
+						ms = CompressLazy.merge_observations($new_observations, $observations, $num_new_observations, $num_observations)?
+						$new_observations = ms.new_observations
+						$observations = ms.observations
+						$num_new_observations = ms.num_new_observations
+						$num_observations = ms.num_observations
 					}
 				} else {
 				}
@@ -526,12 +525,10 @@ CompressLazy := [].{
 				CompressLazy.soft_max_block_length,
 			)
 			var $next_recalc_min_len = $in_next + (in_end - $in_next).min(10000)
-			var $stats = {
-				new_observations: List.repeat(0.U32, CompressLazy.num_observation_types),
-				observations: List.repeat(0.U32, CompressLazy.num_observation_types),
-				num_new_observations: 0.U64,
-				num_observations: 0.U64,
-			}
+			var $new_observations = List.repeat(0.U32, CompressLazy.num_observation_types)
+			var $observations = List.repeat(0.U32, CompressLazy.num_observation_types)
+			var $num_new_observations = 0.U64
+			var $num_observations = 0.U64
 			var $freqs_litlen = List.repeat(0.U32, DeflateTables.num_litlen_syms)
 			var $freqs_offset = List.repeat(0.U32, DeflateTables.num_offset_syms)
 			var $seq_idx = 0.U64
@@ -591,13 +588,11 @@ CompressLazy := [].{
 						Err(_) => return Err(CompressBug)
 					}
 					obs = lit.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit.bitwise_and(1))
-					$stats = { ..$stats,
-						new_observations: match List.set($stats.new_observations, obs, (List.get($stats.new_observations, obs) ?? 0) + 1) {
-							Ok(next) => next
-							Err(_) => return Err(CompressBug)
-						},
-						num_new_observations: $stats.num_new_observations + 1,
+					$new_observations = match List.set($new_observations, obs, (List.get($new_observations, obs) ?? 0) + 1) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
 					}
+					$num_new_observations = $num_new_observations + 1
 					$litrunlen = $litrunlen + 1
 					$in_next = $in_next + 1
 				} else {
@@ -659,13 +654,11 @@ CompressLazy := [].{
 									Err(_) => return Err(CompressBug)
 								}
 								obs = lit.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit.bitwise_and(1))
-								$stats = { ..$stats,
-									new_observations: match List.set($stats.new_observations, obs, (List.get($stats.new_observations, obs) ?? 0) + 1) {
-										Ok(next) => next
-										Err(_) => return Err(CompressBug)
-									},
-									num_new_observations: $stats.num_new_observations + 1,
+								$new_observations = match List.set($new_observations, obs, (List.get($new_observations, obs) ?? 0) + 1) {
+									Ok(next) => next
+									Err(_) => return Err(CompressBug)
 								}
+								$num_new_observations = $num_new_observations + 1
 								$litrunlen = $litrunlen + 1
 								$cur_len = nxt.length
 								$cur_offset = nxt.offset
@@ -711,26 +704,22 @@ CompressLazy := [].{
 										Err(_) => return Err(CompressBug)
 									}
 									obs_a = lit_a.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit_a.bitwise_and(1))
-									$stats = { ..$stats,
-										new_observations: match List.set($stats.new_observations, obs_a, (List.get($stats.new_observations, obs_a) ?? 0) + 1) {
-											Ok(next) => next
-											Err(_) => return Err(CompressBug)
-										},
-										num_new_observations: $stats.num_new_observations + 1,
+									$new_observations = match List.set($new_observations, obs_a, (List.get($new_observations, obs_a) ?? 0) + 1) {
+										Ok(next) => next
+										Err(_) => return Err(CompressBug)
 									}
+									$num_new_observations = $num_new_observations + 1
 									lit_b = (List.get(input, $in_next - 2) ?? 0).to_u64()
 									$freqs_litlen = match List.set($freqs_litlen, lit_b, (List.get($freqs_litlen, lit_b) ?? 0) + 1) {
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)
 									}
 									obs_b = lit_b.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit_b.bitwise_and(1))
-									$stats = { ..$stats,
-										new_observations: match List.set($stats.new_observations, obs_b, (List.get($stats.new_observations, obs_b) ?? 0) + 1) {
-											Ok(next) => next
-											Err(_) => return Err(CompressBug)
-										},
-										num_new_observations: $stats.num_new_observations + 2 - 1,
+									$new_observations = match List.set($new_observations, obs_b, (List.get($new_observations, obs_b) ?? 0) + 1) {
+										Ok(next) => next
+										Err(_) => return Err(CompressBug)
 									}
+									$num_new_observations = $num_new_observations + 2 - 1
 									$litrunlen = $litrunlen + 2
 									$cur_len = nxt2.length
 									$cur_offset = nxt2.offset
@@ -757,13 +746,11 @@ CompressLazy := [].{
 								Err(_) => return Err(CompressBug)
 							}
 							obs = 8 + if $cur_len >= 9 { 1 } else { 0 }
-							$stats = { ..$stats,
-								new_observations: match List.set($stats.new_observations, obs, (List.get($stats.new_observations, obs) ?? 0) + 1) {
-									Ok(next) => next
-									Err(_) => return Err(CompressBug)
-								},
-								num_new_observations: $stats.num_new_observations + 1,
+							$new_observations = match List.set($new_observations, obs, (List.get($new_observations, obs) ?? 0) + 1) {
+								Ok(next) => next
+								Err(_) => return Err(CompressBug)
 							}
+							$num_new_observations = $num_new_observations + 1
 							$seqs = match List.set($seqs, $seq_idx, {
 								litrunlen_and_length: $litrunlen.bitwise_or($cur_len.to_u32_wrap().shl_wrap(BlockOut.seq_length_shift)),
 								offset: $cur_offset.to_u16_wrap(),
@@ -795,14 +782,17 @@ CompressLazy := [].{
 				# Time to end the block?
 				if $in_next >= in_max_block_end or $seq_idx >= CompressLazy.seq_store_length {
 					$in_block = 0
-				} else if $stats.num_new_observations >= CompressLazy.observations_per_block_check
+				} else if $num_new_observations >= CompressLazy.observations_per_block_check
 					and $in_next - in_block_begin >= CompressLazy.min_block_length
 					and in_end - $in_next >= CompressLazy.min_block_length {
-					checked = CompressLazy.do_end_block_check($stats, $in_next - in_block_begin)?
-					$stats = checked.stats
-					if checked.should_end == 1 {
+					if CompressLazy.do_end_block_check($new_observations, $observations, $num_new_observations, $num_observations, $in_next - in_block_begin) == 1 {
 						$in_block = 0
 					} else {
+						ms = CompressLazy.merge_observations($new_observations, $observations, $num_new_observations, $num_observations)?
+						$new_observations = ms.new_observations
+						$observations = ms.observations
+						$num_new_observations = ms.num_new_observations
+						$num_observations = ms.num_observations
 					}
 				} else {
 				}
