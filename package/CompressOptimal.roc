@@ -52,16 +52,22 @@ CompressOptimal := [].{
 	match_cache_length : U64
 	match_cache_length = 1500000
 
+	## The matchfinder never reports two matches of the same length, so one of
+	## each possible length bounds what a single position can produce.
 	max_matches_per_pos : U64
-	max_matches_per_pos = 256
+	max_matches_per_pos = DeflateTables.max_match_len - DeflateTables.min_match_len + 1
 
 	match_cache_size : U64
-	match_cache_size = 1500513
+	match_cache_size = CompressOptimal.match_cache_length
+		+ CompressOptimal.max_matches_per_pos
+		+ DeflateTables.max_match_len
+		- 1
 
 	## One node per position plus one for the end of the block. The longest a
-	## block can get is the soft maximum plus a whole match past it.
+	## block can get is the soft maximum plus the shortest block that could
+	## follow it, since a shorter remainder is folded into the current block.
 	optimum_nodes_size : U64
-	optimum_nodes_size = 305000
+	optimum_nodes_size = CompressLazy.soft_max_block_length + CompressLazy.min_block_length
 
 	## Assumed cost of an offset symbol when nothing better is known, which is
 	## `-log2(1/30)` in sixteenths of a bit, thirty being the offset symbols

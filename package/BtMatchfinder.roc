@@ -26,15 +26,16 @@ BtMatchfinder := [].{
 	hash4_order : U64
 	hash4_order = 16
 
-	## Entries in the two hash tables and in the child table.
+	## Entries in the two hash tables and in the child table. Every position in
+	## the window has a left and a right child, hence the doubling.
 	hash3_size : U64
-	hash3_size = 131072
+	hash3_size = 65536 * BtMatchfinder.hash3_ways
 
 	hash4_size : U64
 	hash4_size = 65536
 
 	child_size : U64
-	child_size = 65536
+	child_size = 2 * Matchfinder.window_size
 
 	## Bytes that must be readable at the position: four for the sequence and
 	## one more for the next position's hash.
