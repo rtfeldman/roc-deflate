@@ -69,6 +69,15 @@ HcMatchfinder := [].{
 		tab4_in = $tab4
 		nt_in = $nt
 		in_base = $base
+
+		# Pin the table lengths where the range prover can see them: every
+		# masked chain lookup below stays within these bounds, so one guard
+		# here lets the compiler drop the per-step bounds checks.
+		if List.len(tab3_in) < 32768 or List.len(tab4_in) < 65536 or List.len(nt_in) < 32768 {
+			return Err(CompressBug)
+		} else {
+		}
+
 		cur_pos = in_next - in_base
 		cutoff = cur_pos.to_i32_wrap() - 32768
 
