@@ -283,20 +283,9 @@ HcMatchfinder := [].{
 					$cur_pos = 0
 				} else {
 				}
-
-				# Pin the table lengths where the range prover can see them,
-				# just past the rebase so the facts dominate every store
-				# below; the masked hashes then index provably in bounds.
-				if List.len($tab3) < 32768 or List.len($tab4) < 65536 or List.len($next_tab) < 32768 {
-					return Err(CompressBug)
-				} else {
-				}
-
 				pos = $cur_pos.to_i16_wrap()
-				h3 = $hash3.bitwise_and(32767)
-				h4 = $hash4.bitwise_and(65535)
-				prev_head = List.get($tab4, h4) ?? 0
-				$tab3 = match List.set($tab3, h3, pos) {
+				prev_head = List.get($tab4, $hash4) ?? 0
+				$tab3 = match List.set($tab3, $hash3, pos) {
 					Ok(next) => next
 					Err(_) => return Err(CompressBug)
 				}
@@ -304,7 +293,7 @@ HcMatchfinder := [].{
 					Ok(next) => next
 					Err(_) => return Err(CompressBug)
 				}
-				$tab4 = match List.set($tab4, h4, pos) {
+				$tab4 = match List.set($tab4, $hash4, pos) {
 					Ok(next) => next
 					Err(_) => return Err(CompressBug)
 				}

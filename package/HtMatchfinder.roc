@@ -52,14 +52,6 @@ HtMatchfinder := [].{
 		} else {
 		}
 		in_base = $base
-
-		# Pin the table length where the range prover can see it: the masked
-		# bucket slots below then index provably in bounds.
-		if List.len($tab) < 65536 {
-			return Err(CompressBug)
-		} else {
-		}
-
 		cur_pos = in_next - in_base
 		cutoff = cur_pos.to_i32_wrap() - 32768
 
@@ -67,7 +59,7 @@ HtMatchfinder := [].{
 		next_hash = Matchfinder.lz_hash(U32.from_le_bytes(input, in_next + 1) ?? 0, HtMatchfinder.hash_order)
 		seq = U32.from_le_bytes(input, in_next) ?? 0
 
-		slot0 = hash.bitwise_and(32767) * 2
+		slot0 = hash * 2
 		cur_node0 = List.get($tab, slot0) ?? 0
 		tab1 = match List.set($tab, slot0, cur_pos.to_i16_wrap()) {
 			Ok(next) => next
@@ -147,18 +139,10 @@ HtMatchfinder := [].{
 			} else {
 			}
 
-			# Pin the table length for the range prover before the loop; the
-			# per-iteration stores keep it, so the masked slots stay in
-			# bounds without per-store checks.
-			if List.len($tab) < 65536 {
-				return Err(CompressBug)
-			} else {
-			}
-
 			var $hash = hash_0
 			var $remaining = count
 			while $remaining > 0 {
-				slot0 = $hash.bitwise_and(32767) * 2
+				slot0 = $hash * 2
 				first = List.get($tab, slot0) ?? 0
 				tab1 = match List.set($tab, slot0 + 1, first) {
 					Ok(next) => next
