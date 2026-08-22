@@ -1,1 +1,1 @@
-package [Deflate] {}
+package [Deflate, Inflate, Huffman, Precode, DeflateTables, BitWriter, Block, HtMatchfinder, CompressFastest, BtMatchfinder, CostModel, DefaultCosts, BlockSplit, MinCostPath, CompressSmallest, HcMatchfinder, CompressBalanced] {}
