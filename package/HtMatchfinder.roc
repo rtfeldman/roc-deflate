@@ -59,7 +59,11 @@ HtMatchfinder := [].{
 		next_hash = Matchfinder.lz_hash(U32.from_le_bytes(input, in_next + 1) ?? 0, HtMatchfinder.hash_order)
 		seq = U32.from_le_bytes(input, in_next) ?? 0
 
-		slot0 = hash * 2
+		slot0 = hash.bitwise_and(0x7FFF) * 2
+		if slot0 + 1 >= List.len($tab) {
+			return Err(CompressBug)
+		} else {
+		}
 		cur_node0 = List.get($tab, slot0) ?? 0
 		tab1 = match List.set($tab, slot0, cur_pos.to_i16_wrap()) {
 			Ok(next) => next
@@ -142,7 +146,11 @@ HtMatchfinder := [].{
 			var $hash = hash_0
 			var $remaining = count
 			while $remaining > 0 {
-				slot0 = $hash * 2
+				slot0 = $hash.bitwise_and(0x7FFF) * 2
+				if slot0 + 1 >= List.len($tab) {
+					return Err(CompressBug)
+				} else {
+				}
 				first = List.get($tab, slot0) ?? 0
 				tab1 = match List.set($tab, slot0 + 1, first) {
 					Ok(next) => next
