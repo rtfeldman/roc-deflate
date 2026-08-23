@@ -88,6 +88,10 @@ HcMatchfinder := [].{
 				offset: in_next - $best_match_at,
 			})
 		} else {
+			if List.len(input) < 4 {
+				return Err(CompressBug)
+			} else {
+			}
 			hash3 = nh3
 			hash4 = nh4
 			cur_node3 = List.get(tab3_in, hash3) ?? 0
@@ -147,7 +151,7 @@ HcMatchfinder := [].{
 								$scanning = 0
 							} else {
 								$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
-								$depth = $depth - 1
+								$depth = $depth.minus_wrap(1)
 								if $node4.to_i32() <= cutoff or $depth == 0 {
 									$scanning = 0
 									$done = 1
@@ -163,7 +167,7 @@ HcMatchfinder := [].{
 								$done = 1
 							} else {
 								$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
-								$depth = $depth - 1
+								$depth = $depth.minus_wrap(1)
 								if $node4.to_i32() <= cutoff or $depth == 0 {
 									$done = 1
 								} else {
@@ -197,7 +201,7 @@ HcMatchfinder := [].{
 						$scanning = 0
 					} else {
 						$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
-						$depth = $depth - 1
+						$depth = $depth.minus_wrap(1)
 						if $node4.to_i32() <= cutoff or $depth == 0 {
 							$scanning = 0
 							$done = 1
@@ -219,7 +223,7 @@ HcMatchfinder := [].{
 					}
 					if $done == 0 {
 						$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
-						$depth = $depth - 1
+						$depth = $depth.minus_wrap(1)
 						if $node4.to_i32() <= cutoff or $depth == 0 {
 							$done = 1
 						} else {

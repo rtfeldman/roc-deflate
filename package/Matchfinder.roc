@@ -62,7 +62,7 @@ Matchfinder := [].{
 	match_index : U64, I16 -> U64
 	match_index = |in_base, node| {
 		abs : I64
-		abs = in_base.to_i64_wrap() + node.to_i64()
+		abs = in_base.to_i64_wrap().plus_wrap(node.to_i64())
 		abs.to_u64_wrap()
 	}
 
