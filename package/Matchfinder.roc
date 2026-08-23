@@ -90,8 +90,8 @@ Matchfinder := [].{
 					$diff = v
 					$found = 1
 				} else {
-					$len = $len + 8
-					$step = $step + 1
+					$len = $len.plus_wrap(8)
+					$step = $step.plus_wrap(1)
 				}
 			}
 		} else {
@@ -104,7 +104,7 @@ Matchfinder := [].{
 				$diff = v
 				$found = 1
 			} else {
-				$len = $len + 8
+				$len = $len.plus_wrap(8)
 			}
 		}
 
@@ -114,7 +114,7 @@ Matchfinder := [].{
 			var $tail = $len
 			while $tail < max_len
 				and (List.get(input, match_at + $tail) ?? 0) == (List.get(input, str_at + $tail) ?? 0) {
-				$tail = $tail + 1
+				$tail = $tail.plus_wrap(1)
 			}
 			$tail
 		}
