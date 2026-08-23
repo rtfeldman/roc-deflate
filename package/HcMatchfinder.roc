@@ -293,12 +293,12 @@ HcMatchfinder := [].{
 					Err(_) => return Err(CompressBug)
 				}
 
-				$in_next = $in_next + 1
+				$in_next = $in_next.plus_wrap(1)
 				next_hashseq = U32.from_le_bytes(input, $in_next) ?? 0
 				$hash3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
 				$hash4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
-				$cur_pos = $cur_pos + 1
-				$remaining = $remaining - 1
+				$cur_pos = $cur_pos.plus_wrap(1)
+				$remaining = $remaining.minus_wrap(1)
 			}
 			Ok({
 				hash3: $tab3,
