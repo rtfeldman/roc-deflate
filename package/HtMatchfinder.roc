@@ -44,6 +44,10 @@ HtMatchfinder := [].{
 	## branch.
 	longest_match : List(I16), U64, U64, List(U8), U64, U64, U64 -> Try(Match, [CompressBug])
 	longest_match = |tab_0, base_0, hash_0, input, in_next, max_len, nice_len| {
+		if List.len(input) < 4 {
+			return Err(CompressBug)
+		} else {
+		}
 		var $tab = tab_0
 		var $base = base_0
 		if in_next - $base == Matchfinder.window_size {
@@ -161,10 +165,10 @@ HtMatchfinder := [].{
 					Err(_) => return Err(CompressBug)
 				}
 
-				$in_next = $in_next + 1
+				$in_next = $in_next.plus_wrap(1)
 				$hash = Matchfinder.lz_hash(U32.from_le_bytes(input, $in_next) ?? 0, HtMatchfinder.hash_order)
-				$cur_pos = $cur_pos + 1
-				$remaining = $remaining - 1
+				$cur_pos = $cur_pos.plus_wrap(1)
+				$remaining = $remaining.minus_wrap(1)
 			}
 			Ok({ hash_tab: $tab, in_cur_base: $base, next_hash: $hash })
 		}
