@@ -322,7 +322,8 @@ CompressOptimal := [].{
 		var $i = 0.U64
 		while $i < block_length {
 			b = (List.get(input, block_begin + $i) ?? 0).to_u64()
-			$counts = match List.set($counts, b, (List.get($counts, b) ?? 0) + 1) {
+			b_count = (List.get($counts, b) ?? 0) + 1
+			$counts = match List.set($counts, b, b_count) {
 				Ok(next) => next
 				Err(_) => return Err(CompressBug)
 			}
@@ -475,18 +476,21 @@ CompressOptimal := [].{
 			length = item.bitwise_and(CompressOptimal.optimum_len_mask).to_u64()
 			offset = item.shr_zf_wrap(CompressOptimal.optimum_offset_shift).to_u64()
 			if length == 1 {
-				$freqs_litlen = match List.set($freqs_litlen, offset, (List.get($freqs_litlen, offset) ?? 0) + 1) {
+				offset_count = (List.get($freqs_litlen, offset) ?? 0) + 1
+				$freqs_litlen = match List.set($freqs_litlen, offset, offset_count) {
 					Ok(next) => next
 					Err(_) => return Err(CompressBug)
 				}
 			} else {
 				sym = DeflateTables.first_len_sym + DeflateTables.length_slot(length)
-				$freqs_litlen = match List.set($freqs_litlen, sym, (List.get($freqs_litlen, sym) ?? 0) + 1) {
+				sym_count = (List.get($freqs_litlen, sym) ?? 0) + 1
+				$freqs_litlen = match List.set($freqs_litlen, sym, sym_count) {
 					Ok(next) => next
 					Err(_) => return Err(CompressBug)
 				}
 				slot = DeflateTables.offset_slot(offset)
-				$freqs_offset = match List.set($freqs_offset, slot, (List.get($freqs_offset, slot) ?? 0) + 1) {
+				slot_count = (List.get($freqs_offset, slot) ?? 0) + 1
+				$freqs_offset = match List.set($freqs_offset, slot, slot_count) {
 					Ok(next) => next
 					Err(_) => return Err(CompressBug)
 				}
@@ -542,7 +546,8 @@ CompressOptimal := [].{
 		var $i = 0.U64
 		while $i < block_length {
 			b = (List.get(input, block_begin + $i) ?? 0).to_u64()
-			$freqs_litlen = match List.set($freqs_litlen, b, (List.get($freqs_litlen, b) ?? 0) + 1) {
+			b_count = (List.get($freqs_litlen, b) ?? 0) + 1
+			$freqs_litlen = match List.set($freqs_litlen, b, b_count) {
 				Ok(next) => next
 				Err(_) => return Err(CompressBug)
 			}
@@ -767,7 +772,8 @@ CompressOptimal := [].{
 				if $in_next >= $next_observation {
 					if $best_len >= min_len {
 						obs = 8 + if $best_len >= 9 { 1 } else { 0 }
-						$new_observations = match List.set($new_observations, obs, (List.get($new_observations, obs) ?? 0) + 1) {
+						obs_count = (List.get($new_observations, obs) ?? 0) + 1
+						$new_observations = match List.set($new_observations, obs, obs_count) {
 							Ok(next) => next
 							Err(_) => return Err(CompressBug)
 						}
@@ -781,7 +787,8 @@ CompressOptimal := [].{
 					} else {
 						lit = (List.get(input, $in_next) ?? 0).to_u64()
 						obs = lit.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit.bitwise_and(1))
-						$new_observations = match List.set($new_observations, obs, (List.get($new_observations, obs) ?? 0) + 1) {
+						obs_count = (List.get($new_observations, obs) ?? 0) + 1
+						$new_observations = match List.set($new_observations, obs, obs_count) {
 							Ok(next) => next
 							Err(_) => return Err(CompressBug)
 						}
@@ -1273,7 +1280,8 @@ CompressOptimal := [].{
 		while $i <= DeflateTables.max_match_len {
 			f = List.get($fresh, $i) ?? 0
 			if f != 0 {
-				$total = match List.set($total, $i, (List.get($total, $i) ?? 0) + f) {
+				total_count = (List.get($total, $i) ?? 0) + f
+				$total = match List.set($total, $i, total_count) {
 					Ok(next) => next
 					Err(_) => return Err(CompressBug)
 				}

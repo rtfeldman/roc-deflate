@@ -87,7 +87,8 @@ BlockOut := [].{
 				# Symbol 18 repeats 11 to 138 zeroes, symbol 17 repeats 3 to 10.
 				while ($run_end - $run_start) >= 11 {
 					extra = (($run_end - $run_start) - 11).min(0x7F)
-					$freqs = match List.set($freqs, 18, (List.get($freqs, 18) ?? 0) + 1) {
+					freqs_count = (List.get($freqs, 18) ?? 0) + 1
+					$freqs = match List.set($freqs, 18, freqs_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
@@ -100,7 +101,8 @@ BlockOut := [].{
 				}
 				if ($run_end - $run_start) >= 3 {
 					extra = (($run_end - $run_start) - 3).min(0x7)
-					$freqs = match List.set($freqs, 17, (List.get($freqs, 17) ?? 0) + 1) {
+					freqs_count = (List.get($freqs, 17) ?? 0) + 1
+					$freqs = match List.set($freqs, 17, freqs_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
@@ -129,7 +131,8 @@ BlockOut := [].{
 					var $repeating = True
 					while $repeating {
 						extra = (($run_end - $run_start) - 3).min(0x3)
-						$freqs = match List.set($freqs, 16, (List.get($freqs, 16) ?? 0) + 1) {
+						freqs_count = (List.get($freqs, 16) ?? 0) + 1
+						$freqs = match List.set($freqs, 16, freqs_count) {
 							Ok(next) => next
 							Err(_) => return Err(CompressBug)
 						}

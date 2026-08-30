@@ -70,7 +70,8 @@ CompressFast := [].{
 						var $left = $max_len
 						while $left > 0 {
 							lit = (List.get(input, $in_next) ?? 0).to_u64()
-							$freqs_litlen = match List.set($freqs_litlen, lit, (List.get($freqs_litlen, lit) ?? 0) + 1) {
+							lit_count = (List.get($freqs_litlen, lit) ?? 0) + 1
+							$freqs_litlen = match List.set($freqs_litlen, lit, lit_count) {
 								Ok(next) => next
 								Err(_) => return Err(CompressBug)
 							}
@@ -96,11 +97,13 @@ CompressFast := [].{
 						length_slot = DeflateTables.length_slot(found.length)
 						offset_slot = DeflateTables.offset_slot(found.offset)
 						litlen_sym = DeflateTables.first_len_sym + length_slot
-						$freqs_litlen = match List.set($freqs_litlen, litlen_sym, (List.get($freqs_litlen, litlen_sym) ?? 0) + 1) {
+						litlen_sym_count = (List.get($freqs_litlen, litlen_sym) ?? 0) + 1
+						$freqs_litlen = match List.set($freqs_litlen, litlen_sym, litlen_sym_count) {
 							Ok(next) => next
 							Err(_) => return Err(CompressBug)
 						}
-						$freqs_offset = match List.set($freqs_offset, offset_slot, (List.get($freqs_offset, offset_slot) ?? 0) + 1) {
+						offset_slot_count = (List.get($freqs_offset, offset_slot) ?? 0) + 1
+						$freqs_offset = match List.set($freqs_offset, offset_slot, offset_slot_count) {
 							Ok(next) => next
 							Err(_) => return Err(CompressBug)
 						}
@@ -122,7 +125,8 @@ CompressFast := [].{
 						$in_next = $in_next + found.length
 					} else {
 						lit = (List.get(input, $in_next) ?? 0).to_u64()
-						$freqs_litlen = match List.set($freqs_litlen, lit, (List.get($freqs_litlen, lit) ?? 0) + 1) {
+						lit_count = (List.get($freqs_litlen, lit) ?? 0) + 1
+						$freqs_litlen = match List.set($freqs_litlen, lit, lit_count) {
 							Ok(next) => next
 							Err(_) => return Err(CompressBug)
 						}

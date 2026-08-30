@@ -342,16 +342,19 @@ CompressLazy := [].{
 					length_slot = DeflateTables.length_slot(found.length)
 					offset_slot = DeflateTables.offset_slot(found.offset)
 					litlen_sym = DeflateTables.first_len_sym + length_slot
-					$freqs_litlen = match List.set($freqs_litlen, litlen_sym, (List.get($freqs_litlen, litlen_sym) ?? 0) + 1) {
+					litlen_sym_count = (List.get($freqs_litlen, litlen_sym) ?? 0) + 1
+					$freqs_litlen = match List.set($freqs_litlen, litlen_sym, litlen_sym_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
-					$freqs_offset = match List.set($freqs_offset, offset_slot, (List.get($freqs_offset, offset_slot) ?? 0) + 1) {
+					offset_slot_count = (List.get($freqs_offset, offset_slot) ?? 0) + 1
+					$freqs_offset = match List.set($freqs_offset, offset_slot, offset_slot_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
 					obs = 8 + if found.length >= 9 { 1 } else { 0 }
-					$new_observations = match List.set($new_observations, obs, (List.get($new_observations, obs) ?? 0) + 1) {
+					obs_count = (List.get($new_observations, obs) ?? 0) + 1
+					$new_observations = match List.set($new_observations, obs, obs_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
@@ -377,12 +380,14 @@ CompressLazy := [].{
 					$in_next = $in_next + found.length
 				} else {
 					lit = (List.get(input, $in_next) ?? 0).to_u64()
-					$freqs_litlen = match List.set($freqs_litlen, lit, (List.get($freqs_litlen, lit) ?? 0) + 1) {
+					lit_count = (List.get($freqs_litlen, lit) ?? 0) + 1
+					$freqs_litlen = match List.set($freqs_litlen, lit, lit_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
 					obs = lit.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit.bitwise_and(1))
-					$new_observations = match List.set($new_observations, obs, (List.get($new_observations, obs) ?? 0) + 1) {
+					obs_count = (List.get($new_observations, obs) ?? 0) + 1
+					$new_observations = match List.set($new_observations, obs, obs_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
@@ -583,12 +588,14 @@ CompressLazy := [].{
 					or (found.length == DeflateTables.min_match_len and found.offset > 8192) {
 					# No match worth taking; emit a literal.
 					lit = (List.get(input, $in_next) ?? 0).to_u64()
-					$freqs_litlen = match List.set($freqs_litlen, lit, (List.get($freqs_litlen, lit) ?? 0) + 1) {
+					lit_count = (List.get($freqs_litlen, lit) ?? 0) + 1
+					$freqs_litlen = match List.set($freqs_litlen, lit, lit_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
 					obs = lit.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit.bitwise_and(1))
-					$new_observations = match List.set($new_observations, obs, (List.get($new_observations, obs) ?? 0) + 1) {
+					obs_count = (List.get($new_observations, obs) ?? 0) + 1
+					$new_observations = match List.set($new_observations, obs, obs_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
@@ -649,12 +656,14 @@ CompressLazy := [].{
 								# The next position starts a better match, so
 								# this position becomes a literal.
 								lit = (List.get(input, $in_next - 2) ?? 0).to_u64()
-								$freqs_litlen = match List.set($freqs_litlen, lit, (List.get($freqs_litlen, lit) ?? 0) + 1) {
+								lit_count = (List.get($freqs_litlen, lit) ?? 0) + 1
+								$freqs_litlen = match List.set($freqs_litlen, lit, lit_count) {
 									Ok(next) => next
 									Err(_) => return Err(CompressBug)
 								}
 								obs = lit.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit.bitwise_and(1))
-								$new_observations = match List.set($new_observations, obs, (List.get($new_observations, obs) ?? 0) + 1) {
+								obs_count = (List.get($new_observations, obs) ?? 0) + 1
+								$new_observations = match List.set($new_observations, obs, obs_count) {
 									Ok(next) => next
 									Err(_) => return Err(CompressBug)
 								}
@@ -699,23 +708,27 @@ CompressLazy := [].{
 									# Two positions ahead is better still, so
 									# both of these become literals.
 									lit_a = (List.get(input, $in_next - 3) ?? 0).to_u64()
-									$freqs_litlen = match List.set($freqs_litlen, lit_a, (List.get($freqs_litlen, lit_a) ?? 0) + 1) {
+									lit_a_count = (List.get($freqs_litlen, lit_a) ?? 0) + 1
+									$freqs_litlen = match List.set($freqs_litlen, lit_a, lit_a_count) {
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)
 									}
 									obs_a = lit_a.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit_a.bitwise_and(1))
-									$new_observations = match List.set($new_observations, obs_a, (List.get($new_observations, obs_a) ?? 0) + 1) {
+									obs_a_count = (List.get($new_observations, obs_a) ?? 0) + 1
+									$new_observations = match List.set($new_observations, obs_a, obs_a_count) {
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)
 									}
 									$num_new_observations = $num_new_observations + 1
 									lit_b = (List.get(input, $in_next - 2) ?? 0).to_u64()
-									$freqs_litlen = match List.set($freqs_litlen, lit_b, (List.get($freqs_litlen, lit_b) ?? 0) + 1) {
+									lit_b_count = (List.get($freqs_litlen, lit_b) ?? 0) + 1
+									$freqs_litlen = match List.set($freqs_litlen, lit_b, lit_b_count) {
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)
 									}
 									obs_b = lit_b.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit_b.bitwise_and(1))
-									$new_observations = match List.set($new_observations, obs_b, (List.get($new_observations, obs_b) ?? 0) + 1) {
+									obs_b_count = (List.get($new_observations, obs_b) ?? 0) + 1
+									$new_observations = match List.set($new_observations, obs_b, obs_b_count) {
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)
 									}
@@ -737,16 +750,19 @@ CompressLazy := [].{
 							length_slot = DeflateTables.length_slot($cur_len)
 							offset_slot = DeflateTables.offset_slot($cur_offset)
 							litlen_sym = DeflateTables.first_len_sym + length_slot
-							$freqs_litlen = match List.set($freqs_litlen, litlen_sym, (List.get($freqs_litlen, litlen_sym) ?? 0) + 1) {
+							litlen_sym_count = (List.get($freqs_litlen, litlen_sym) ?? 0) + 1
+							$freqs_litlen = match List.set($freqs_litlen, litlen_sym, litlen_sym_count) {
 								Ok(next) => next
 								Err(_) => return Err(CompressBug)
 							}
-							$freqs_offset = match List.set($freqs_offset, offset_slot, (List.get($freqs_offset, offset_slot) ?? 0) + 1) {
+							offset_slot_count = (List.get($freqs_offset, offset_slot) ?? 0) + 1
+							$freqs_offset = match List.set($freqs_offset, offset_slot, offset_slot_count) {
 								Ok(next) => next
 								Err(_) => return Err(CompressBug)
 							}
 							obs = 8 + if $cur_len >= 9 { 1 } else { 0 }
-							$new_observations = match List.set($new_observations, obs, (List.get($new_observations, obs) ?? 0) + 1) {
+							obs_count = (List.get($new_observations, obs) ?? 0) + 1
+							$new_observations = match List.set($new_observations, obs, obs_count) {
 								Ok(next) => next
 								Err(_) => return Err(CompressBug)
 							}
