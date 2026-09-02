@@ -316,31 +316,58 @@ CompressLazy := [].{
 				} else {
 				}
 
-				found = HcMatchfinder.longest_match(
-					$tab3,
-					$tab4,
-					$nt,
-					$base,
-					$nh3,
-					$nh4,
-					input,
-					$in_next,
-					min_len - 1,
-					$max_len,
-					$nice_len,
-					params.max_search_depth,
-				)?
-				$tab3 = found.hash3
-				$tab4 = found.hash4
-				$nt = found.next_tab
-				$base = found.in_cur_base
-				$nh3 = found.next_hash3
-				$nh4 = found.next_hash4
+				# Slide the tables when the window has moved one whole window past
+				# the base, then insert this position before searching: the chain
+				# heads read here are the ones from before the insert, so the walk
+				# starts at the previous occurrence rather than at this position.
+				if $in_next - $base == Matchfinder.window_size {
+					$tab3 = Matchfinder.rebase_table($tab3)?
+					$tab4 = Matchfinder.rebase_table($tab4)?
+					$nt = Matchfinder.rebase_table($nt)?
+					$base = $base + Matchfinder.window_size
+				} else {
+				}
+				var $found = { length: min_len - 1, offset: 0.U64 }
+				if $max_len < 5 {
+					# Not enough bytes left to read the next position's hash sequence.
+				} else {
+					cur_pos = $in_next - $base
+					cur_node3 = List.get($tab3, $nh3) ?? 0
+					cur_node4 = List.get($tab4, $nh4) ?? 0
+					pos = cur_pos.to_i16_wrap()
+					$tab3 = match List.set($tab3, $nh3, pos) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
+					}
+					$tab4 = match List.set($tab4, $nh4, pos) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
+					}
+					$nt = match List.set($nt, cur_pos, cur_node4) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
+					}
+					next_hashseq = U32.from_le_bytes(input, $in_next + 1) ?? 0
+					$nh3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
+					$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
+					$found = HcMatchfinder.longest_match(
+						$nt,
+						cur_node3,
+						cur_node4,
+						$base,
+						input,
+						$in_next,
+						min_len - 1,
+						$max_len,
+						$nice_len,
+						params.max_search_depth,
+					)?
+				}
 
-				if found.length >= min_len
-					and (found.length > DeflateTables.min_match_len or found.offset <= 4096) {
-					length_slot = DeflateTables.length_slot(found.length)
-					offset_slot = DeflateTables.offset_slot(found.offset)
+				if $found.length >= min_len
+					and ($found.length > DeflateTables.min_match_len or $found.offset <= 4096) {
+					length_slot = DeflateTables.length_slot($found.length)
+					offset_slot = DeflateTables.offset_slot($found.offset)
 					litlen_sym = DeflateTables.first_len_sym + length_slot
 					litlen_sym_count = (List.get($freqs_litlen, litlen_sym) ?? 0) + 1
 					$freqs_litlen = match List.set($freqs_litlen, litlen_sym, litlen_sym_count) {
@@ -352,7 +379,7 @@ CompressLazy := [].{
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
-					obs = 8 + if found.length >= 9 { 1 } else { 0 }
+					obs = 8 + if $found.length >= 9 { 1 } else { 0 }
 					obs_count = (List.get($new_observations, obs) ?? 0) + 1
 					$new_observations = match List.set($new_observations, obs, obs_count) {
 						Ok(next) => next
@@ -360,8 +387,8 @@ CompressLazy := [].{
 					}
 					$num_new_observations = $num_new_observations + 1
 					$seqs = match List.set($seqs, $seq_idx, {
-						litrunlen_and_length: $litrunlen.bitwise_or(found.length.to_u32_wrap().shl_wrap(BlockOut.seq_length_shift)),
-						offset: found.offset.to_u16_wrap(),
+						litrunlen_and_length: $litrunlen.bitwise_or($found.length.to_u32_wrap().shl_wrap(BlockOut.seq_length_shift)),
+						offset: $found.offset.to_u16_wrap(),
 						offset_slot: offset_slot.to_u16_wrap(),
 					}) {
 						Ok(next) => next
@@ -370,14 +397,14 @@ CompressLazy := [].{
 					$seq_idx = $seq_idx + 1
 					$litrunlen = 0
 
-					skipped = HcMatchfinder.skip_bytes($tab3, $tab4, $nt, $base, $nh3, $nh4, input, $in_next + 1, in_end, found.length - 1)?
+					skipped = HcMatchfinder.skip_bytes($tab3, $tab4, $nt, $base, $nh3, $nh4, input, $in_next + 1, in_end, $found.length - 1)?
 					$tab3 = skipped.hash3
 					$tab4 = skipped.hash4
 					$nt = skipped.next_tab
 					$base = skipped.in_cur_base
 					$nh3 = skipped.next_hash3
 					$nh4 = skipped.next_hash4
-					$in_next = $in_next + found.length
+					$in_next = $in_next + $found.length
 				} else {
 					lit = (List.get(input, $in_next) ?? 0).to_u64()
 					lit_count = (List.get($freqs_litlen, lit) ?? 0) + 1
@@ -563,29 +590,56 @@ CompressLazy := [].{
 				} else {
 				}
 
-				found = HcMatchfinder.longest_match(
-					$tab3,
-					$tab4,
-					$nt,
-					$base,
-					$nh3,
-					$nh4,
-					input,
-					$in_next,
-					$min_len - 1,
-					$max_len,
-					$nice_len,
-					params.max_search_depth,
-				)?
-				$tab3 = found.hash3
-				$tab4 = found.hash4
-				$nt = found.next_tab
-				$base = found.in_cur_base
-				$nh3 = found.next_hash3
-				$nh4 = found.next_hash4
+				# Slide the tables when the window has moved one whole window past
+				# the base, then insert this position before searching: the chain
+				# heads read here are the ones from before the insert, so the walk
+				# starts at the previous occurrence rather than at this position.
+				if $in_next - $base == Matchfinder.window_size {
+					$tab3 = Matchfinder.rebase_table($tab3)?
+					$tab4 = Matchfinder.rebase_table($tab4)?
+					$nt = Matchfinder.rebase_table($nt)?
+					$base = $base + Matchfinder.window_size
+				} else {
+				}
+				var $found = { length: $min_len - 1, offset: 0.U64 }
+				if $max_len < 5 {
+					# Not enough bytes left to read the next position's hash sequence.
+				} else {
+					cur_pos = $in_next - $base
+					cur_node3 = List.get($tab3, $nh3) ?? 0
+					cur_node4 = List.get($tab4, $nh4) ?? 0
+					pos = cur_pos.to_i16_wrap()
+					$tab3 = match List.set($tab3, $nh3, pos) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
+					}
+					$tab4 = match List.set($tab4, $nh4, pos) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
+					}
+					$nt = match List.set($nt, cur_pos, cur_node4) {
+						Ok(next) => next
+						Err(_) => return Err(CompressBug)
+					}
+					next_hashseq = U32.from_le_bytes(input, $in_next + 1) ?? 0
+					$nh3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
+					$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
+					$found = HcMatchfinder.longest_match(
+						$nt,
+						cur_node3,
+						cur_node4,
+						$base,
+						input,
+						$in_next,
+						$min_len - 1,
+						$max_len,
+						$nice_len,
+						params.max_search_depth,
+					)?
+				}
 
-				if found.length < $min_len
-					or (found.length == DeflateTables.min_match_len and found.offset > 8192) {
+				if $found.length < $min_len
+					or ($found.length == DeflateTables.min_match_len and $found.offset > 8192) {
 					# No match worth taking; emit a literal.
 					lit = (List.get(input, $in_next) ?? 0).to_u64()
 					lit_count = (List.get($freqs_litlen, lit) ?? 0) + 1
@@ -604,8 +658,8 @@ CompressLazy := [].{
 					$in_next = $in_next + 1
 				} else {
 					$in_next = $in_next + 1
-					var $cur_len = found.length
-					var $cur_offset = found.offset
+					var $cur_len = $found.length
+					var $cur_offset = $found.offset
 
 					# Hold the match while looking for a better one just ahead.
 					var $matching = 1.U64
@@ -626,31 +680,58 @@ CompressLazy := [].{
 								}
 							# Half the search depth here: the initial match is
 							# worth more effort than the lookahead.
-							nxt = HcMatchfinder.longest_match(
-								$tab3,
-								$tab4,
-								$nt,
-								$base,
-								$nh3,
-								$nh4,
-								input,
-								$in_next,
-								$cur_len - 1,
-								$max_len,
-								$nice_len,
-								params.max_search_depth.shr_zf_wrap(1),
-							)?
-							$tab3 = nxt.hash3
-							$tab4 = nxt.hash4
-							$nt = nxt.next_tab
-							$base = nxt.in_cur_base
-							$nh3 = nxt.next_hash3
-							$nh4 = nxt.next_hash4
+							# Slide the tables when the window has moved one whole window past
+							# the base, then insert this position before searching: the chain
+							# heads read here are the ones from before the insert, so the walk
+							# starts at the previous occurrence rather than at this position.
+							if $in_next - $base == Matchfinder.window_size {
+								$tab3 = Matchfinder.rebase_table($tab3)?
+								$tab4 = Matchfinder.rebase_table($tab4)?
+								$nt = Matchfinder.rebase_table($nt)?
+								$base = $base + Matchfinder.window_size
+							} else {
+							}
+							var $nxt = { length: $cur_len - 1, offset: 0.U64 }
+							if $max_len < 5 {
+								# Not enough bytes left to read the next position's hash sequence.
+							} else {
+								cur_pos = $in_next - $base
+								cur_node3 = List.get($tab3, $nh3) ?? 0
+								cur_node4 = List.get($tab4, $nh4) ?? 0
+								pos = cur_pos.to_i16_wrap()
+								$tab3 = match List.set($tab3, $nh3, pos) {
+									Ok(next) => next
+									Err(_) => return Err(CompressBug)
+								}
+								$tab4 = match List.set($tab4, $nh4, pos) {
+									Ok(next) => next
+									Err(_) => return Err(CompressBug)
+								}
+								$nt = match List.set($nt, cur_pos, cur_node4) {
+									Ok(next) => next
+									Err(_) => return Err(CompressBug)
+								}
+								next_hashseq = U32.from_le_bytes(input, $in_next + 1) ?? 0
+								$nh3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
+								$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
+								$nxt = HcMatchfinder.longest_match(
+									$nt,
+									cur_node3,
+									cur_node4,
+									$base,
+									input,
+									$in_next,
+									$cur_len - 1,
+									$max_len,
+									$nice_len,
+									params.max_search_depth.shr_zf_wrap(1),
+								)?
+							}
 							$in_next = $in_next + 1
 
-							better = nxt.length >= $cur_len
-								and 4 * (nxt.length.to_i64_wrap() - $cur_len.to_i64_wrap())
-									+ (CompressLazy.bsr32($cur_offset) - CompressLazy.bsr32(nxt.offset)) > 2
+							better = $nxt.length >= $cur_len
+								and 4 * ($nxt.length.to_i64_wrap() - $cur_len.to_i64_wrap())
+									+ (CompressLazy.bsr32($cur_offset) - CompressLazy.bsr32($nxt.offset)) > 2
 
 							if better {
 								# The next position starts a better match, so
@@ -669,8 +750,8 @@ CompressLazy := [].{
 								}
 								$num_new_observations = $num_new_observations + 1
 								$litrunlen = $litrunlen + 1
-								$cur_len = nxt.length
-								$cur_offset = nxt.offset
+								$cur_len = $nxt.length
+								$cur_offset = $nxt.offset
 							} else if params.lazy >= 2 {
 								remaining2 = in_end - $in_next
 								if remaining2 < DeflateTables.max_match_len {
@@ -678,31 +759,58 @@ CompressLazy := [].{
 									$nice_len = $nice_len.min($max_len)
 								} else {
 								}
-								nxt2 = HcMatchfinder.longest_match(
-									$tab3,
-									$tab4,
-									$nt,
-									$base,
-									$nh3,
-									$nh4,
-									input,
-									$in_next,
-									$cur_len - 1,
-									$max_len,
-									$nice_len,
-									params.max_search_depth.shr_zf_wrap(2),
-								)?
-								$tab3 = nxt2.hash3
-								$tab4 = nxt2.hash4
-								$nt = nxt2.next_tab
-								$base = nxt2.in_cur_base
-								$nh3 = nxt2.next_hash3
-								$nh4 = nxt2.next_hash4
+								# Slide the tables when the window has moved one whole window past
+								# the base, then insert this position before searching: the chain
+								# heads read here are the ones from before the insert, so the walk
+								# starts at the previous occurrence rather than at this position.
+								if $in_next - $base == Matchfinder.window_size {
+									$tab3 = Matchfinder.rebase_table($tab3)?
+									$tab4 = Matchfinder.rebase_table($tab4)?
+									$nt = Matchfinder.rebase_table($nt)?
+									$base = $base + Matchfinder.window_size
+								} else {
+								}
+								var $nxt2 = { length: $cur_len - 1, offset: 0.U64 }
+								if $max_len < 5 {
+									# Not enough bytes left to read the next position's hash sequence.
+								} else {
+									cur_pos = $in_next - $base
+									cur_node3 = List.get($tab3, $nh3) ?? 0
+									cur_node4 = List.get($tab4, $nh4) ?? 0
+									pos = cur_pos.to_i16_wrap()
+									$tab3 = match List.set($tab3, $nh3, pos) {
+										Ok(next) => next
+										Err(_) => return Err(CompressBug)
+									}
+									$tab4 = match List.set($tab4, $nh4, pos) {
+										Ok(next) => next
+										Err(_) => return Err(CompressBug)
+									}
+									$nt = match List.set($nt, cur_pos, cur_node4) {
+										Ok(next) => next
+										Err(_) => return Err(CompressBug)
+									}
+									next_hashseq = U32.from_le_bytes(input, $in_next + 1) ?? 0
+									$nh3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
+									$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
+									$nxt2 = HcMatchfinder.longest_match(
+										$nt,
+										cur_node3,
+										cur_node4,
+										$base,
+										input,
+										$in_next,
+										$cur_len - 1,
+										$max_len,
+										$nice_len,
+										params.max_search_depth.shr_zf_wrap(2),
+									)?
+								}
 								$in_next = $in_next + 1
 
-								better2 = nxt2.length >= $cur_len
-									and 4 * (nxt2.length.to_i64_wrap() - $cur_len.to_i64_wrap())
-										+ (CompressLazy.bsr32($cur_offset) - CompressLazy.bsr32(nxt2.offset)) > 6
+								better2 = $nxt2.length >= $cur_len
+									and 4 * ($nxt2.length.to_i64_wrap() - $cur_len.to_i64_wrap())
+										+ (CompressLazy.bsr32($cur_offset) - CompressLazy.bsr32($nxt2.offset)) > 6
 
 								if better2 {
 									# Two positions ahead is better still, so
@@ -734,8 +842,8 @@ CompressLazy := [].{
 									}
 									$num_new_observations = $num_new_observations + 2 - 1
 									$litrunlen = $litrunlen + 2
-									$cur_len = nxt2.length
-									$cur_offset = nxt2.offset
+									$cur_len = $nxt2.length
+									$cur_offset = $nxt2.offset
 								} else {
 									$emit = 1
 									$skip_after = if $cur_len > 3 { $cur_len - 3 } else { 0 }

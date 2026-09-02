@@ -39,212 +39,151 @@ HcMatchfinder := [].{
 		next_hash4 : U64,
 	}
 
-	Match : {
-		hash3 : List(I16),
-		hash4 : List(I16),
-		next_tab : List(I16),
-		in_cur_base : U64,
-		next_hash3 : U64,
-		next_hash4 : U64,
-		length : U64,
-		offset : U64,
-	}
+	## Result of a search: the longest match found at the searched position,
+	## with `offset` zero when nothing longer than the caller's starting length
+	## turned up.
+	Match : { length : U64, offset : U64 }
 
 	## Find the longest match at `in_next` that beats `best_len`, considering at
 	## most `max_search_depth` candidates and stopping early at `nice_len`.
-	longest_match : List(I16), List(I16), List(I16), U64, U64, U64, List(U8), U64, U64, U64, U64, U64 -> Try(Match, [CompressBug])
-	longest_match = |tab3_0, tab4_0, nt_0, base_0, nh3, nh4, input, in_next, best_len_in, max_len, nice_len, max_search_depth| {
-		var $tab3 = tab3_0
-		var $tab4 = tab4_0
-		var $nt = nt_0
-		var $base = base_0
-		if in_next - $base == Matchfinder.window_size {
-			$tab3 = Matchfinder.rebase_table($tab3)?
-			$tab4 = Matchfinder.rebase_table($tab4)?
-			$nt = Matchfinder.rebase_table($nt)?
-			$base = $base + Matchfinder.window_size
+	## Find the longest match at `in_next`, walking the length-4 chain that
+	## starts at `cur_node4` and trying the length-3 candidate `cur_node3`.
+	##
+	## This only reads the tables. The caller has already slid them if the
+	## window moved, inserted the current position (which is why it holds the
+	## two chain heads from before that insert), and computed the next hashes,
+	## so the tables never cross this call as owned values: three large lists
+	## handed back in a record would cost a retain and a release apiece on every
+	## position, and this is the innermost per-position call.
+	longest_match : List(I16), I16, I16, U64, List(U8), U64, U64, U64, U64, U64 -> Try(Match, [CompressBug])
+	longest_match = |next_tab, cur_node3, cur_node4, in_base, input, in_next, best_len_in, max_len, nice_len, max_search_depth| {
+		if List.len(input) < 4 {
+			return Err(CompressBug)
 		} else {
 		}
-		tab3_in = $tab3
-		tab4_in = $tab4
-		nt_in = $nt
-		in_base = $base
 		cur_pos = in_next - in_base
 		cutoff = cur_pos.to_i32_wrap() - 32768
 
 		var $best_len = best_len_in
 		var $best_match_at = in_next
 
-		if max_len < 5 {
-			# Not enough bytes left to read the next position's hash sequence.
-			Ok({
-				hash3: tab3_in,
-				hash4: tab4_in,
-				next_tab: nt_in,
-				in_cur_base: in_base,
-				next_hash3: nh3,
-				next_hash4: nh4,
-				length: $best_len,
-				offset: in_next - $best_match_at,
-			})
-		} else {
-			if List.len(input) < 4 {
-				return Err(CompressBug)
+		seq4 = U32.from_le_bytes(input, in_next) ?? 0
+		var $node4 = cur_node4
+		var $depth = max_search_depth
+		var $done = 0.U64
+
+		if $best_len < 4 {
+			if cur_node3.to_i32() <= cutoff {
+				$done = 1
 			} else {
-			}
-			hash3 = nh3
-			hash4 = nh4
-			cur_node3 = List.get(tab3_in, hash3) ?? 0
-			cur_node4 = List.get(tab4_in, hash4) ?? 0
-
-			# Insert this position: it replaces the length-3 bucket and goes on
-			# the front of the length-4 chain.
-			pos = cur_pos.to_i16_wrap()
-			new_hash3 = match List.set(tab3_in, hash3, pos) {
-				Ok(next) => next
-				Err(_) => return Err(CompressBug)
-			}
-			new_hash4 = match List.set(tab4_in, hash4, pos) {
-				Ok(next) => next
-				Err(_) => return Err(CompressBug)
-			}
-			next_tab = match List.set(nt_in, cur_pos, cur_node4) {
-				Ok(next) => next
-				Err(_) => return Err(CompressBug)
-			}
-
-			# Precompute the hashes for the next position.
-			next_hashseq = U32.from_le_bytes(input, in_next + 1) ?? 0
-			out_hash3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
-			out_hash4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
-
-			seq4 = U32.from_le_bytes(input, in_next) ?? 0
-			var $node4 = cur_node4
-			var $depth = max_search_depth
-			var $done = 0.U64
-
-			if $best_len < 4 {
-				if cur_node3.to_i32() <= cutoff {
-					$done = 1
-				} else {
-					if $best_len < 3 {
-						match_at = Matchfinder.match_index(in_base, cur_node3)
-						if (U32.from_le_bytes(input, match_at) ?? 0).bitwise_and(0xFFFFFF)
-							== seq4.bitwise_and(0xFFFFFF) {
-							$best_len = 3
-							$best_match_at = match_at
-						} else {
-						}
+				if $best_len < 3 {
+					match_at = Matchfinder.match_index(in_base, cur_node3)
+					if (U32.from_le_bytes(input, match_at) ?? 0).bitwise_and(0xFFFFFF)
+						== seq4.bitwise_and(0xFFFFFF) {
+						$best_len = 3
+						$best_match_at = match_at
 					} else {
 					}
+				} else {
+				}
 
-					if $node4.to_i32() <= cutoff {
-						$done = 1
-					} else {
-						# Walk the chain until four bytes agree.
-						var $scanning = 1.U64
-						var $found_at = 0.U64
-						while $scanning == 1 {
-							match_at = Matchfinder.match_index(in_base, $node4)
-							if (U32.from_le_bytes(input, match_at) ?? 0) == seq4 {
-								$found_at = match_at
+				if $node4.to_i32() <= cutoff {
+					$done = 1
+				} else {
+					# Walk the chain until four bytes agree.
+					var $scanning = 1.U64
+					var $found_at = 0.U64
+					while $scanning == 1 {
+						match_at = Matchfinder.match_index(in_base, $node4)
+						if (U32.from_le_bytes(input, match_at) ?? 0) == seq4 {
+							$found_at = match_at
+							$scanning = 0
+						} else {
+							$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
+							$depth = $depth.minus_wrap(1)
+							if $node4.to_i32() <= cutoff or $depth == 0 {
 								$scanning = 0
-							} else {
-								$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
-								$depth = $depth.minus_wrap(1)
-								if $node4.to_i32() <= cutoff or $depth == 0 {
-									$scanning = 0
-									$done = 1
-								} else {
-								}
-							}
-						}
-
-						if $done == 0 {
-							$best_match_at = $found_at
-							$best_len = Matchfinder.lz_extend(input, in_next, $found_at, 4, max_len)
-							if $best_len >= nice_len {
 								$done = 1
 							} else {
-								$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
-								$depth = $depth.minus_wrap(1)
-								if $node4.to_i32() <= cutoff or $depth == 0 {
-									$done = 1
-								} else {
-								}
 							}
-						} else {
 						}
 					}
-				}
-			} else {
-				if $node4.to_i32() <= cutoff or $best_len >= nice_len {
-					$done = 1
-				} else {
-				}
-			}
 
-			# Now look only for matches longer than the one in hand.
-			while $done == 0 {
-				var $scanning = 1.U64
-				var $cand_at = 0.U64
-				while $scanning == 1 {
-					match_at = Matchfinder.match_index(in_base, $node4)
-					# The four bytes ending just past the current best length
-					# are what a longer match must agree on, so check them
-					# before anything else.
-					if (U32.from_le_bytes(input, match_at + $best_len - 3) ?? 0)
-						== (U32.from_le_bytes(input, in_next + $best_len - 3) ?? 0)
-						and (U32.from_le_bytes(input, match_at) ?? 0)
-							== (U32.from_le_bytes(input, in_next) ?? 0) {
-						$cand_at = match_at
-						$scanning = 0
-					} else {
-						$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
-						$depth = $depth.minus_wrap(1)
-						if $node4.to_i32() <= cutoff or $depth == 0 {
-							$scanning = 0
-							$done = 1
-						} else {
-						}
-					}
-				}
-
-				if $done == 0 {
-					len = Matchfinder.lz_extend(input, in_next, $cand_at, 4, max_len)
-					if len > $best_len {
-						$best_len = len
-						$best_match_at = $cand_at
+					if $done == 0 {
+						$best_match_at = $found_at
+						$best_len = Matchfinder.lz_extend(input, in_next, $found_at, 4, max_len)
 						if $best_len >= nice_len {
 							$done = 1
 						} else {
+							$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
+							$depth = $depth.minus_wrap(1)
+							if $node4.to_i32() <= cutoff or $depth == 0 {
+								$done = 1
+							} else {
+							}
 						}
 					} else {
 					}
-					if $done == 0 {
-						$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
-						$depth = $depth.minus_wrap(1)
-						if $node4.to_i32() <= cutoff or $depth == 0 {
-							$done = 1
-						} else {
-						}
+				}
+			}
+		} else {
+			if $node4.to_i32() <= cutoff or $best_len >= nice_len {
+				$done = 1
+			} else {
+			}
+		}
+
+		# Now look only for matches longer than the one in hand.
+		while $done == 0 {
+			var $scanning = 1.U64
+			var $cand_at = 0.U64
+			while $scanning == 1 {
+				match_at = Matchfinder.match_index(in_base, $node4)
+				# The four bytes ending just past the current best length
+				# are what a longer match must agree on, so check them
+				# before anything else.
+				if (U32.from_le_bytes(input, match_at + $best_len - 3) ?? 0)
+					== (U32.from_le_bytes(input, in_next + $best_len - 3) ?? 0)
+					and (U32.from_le_bytes(input, match_at) ?? 0)
+						== (U32.from_le_bytes(input, in_next) ?? 0) {
+					$cand_at = match_at
+					$scanning = 0
+				} else {
+					$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
+					$depth = $depth.minus_wrap(1)
+					if $node4.to_i32() <= cutoff or $depth == 0 {
+						$scanning = 0
+						$done = 1
+					} else {
+					}
+				}
+			}
+
+			if $done == 0 {
+				len = Matchfinder.lz_extend(input, in_next, $cand_at, 4, max_len)
+				if len > $best_len {
+					$best_len = len
+					$best_match_at = $cand_at
+					if $best_len >= nice_len {
+						$done = 1
 					} else {
 					}
 				} else {
 				}
+				if $done == 0 {
+					$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
+					$depth = $depth.minus_wrap(1)
+					if $node4.to_i32() <= cutoff or $depth == 0 {
+						$done = 1
+					} else {
+					}
+				} else {
+				}
+			} else {
 			}
-
-			Ok({
-				hash3: new_hash3,
-				hash4: new_hash4,
-				next_tab,
-				in_cur_base: in_base,
-				next_hash3: out_hash3,
-				next_hash4: out_hash4,
-				length: $best_len,
-				offset: in_next - $best_match_at,
-			})
 		}
+
+		Ok({ length: $best_len, offset: in_next - $best_match_at })
 	}
 
 	## Insert `count` positions into the tables without searching them.
