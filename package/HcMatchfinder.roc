@@ -142,8 +142,10 @@ HcMatchfinder := [].{
 				# The four bytes ending just past the current best length
 				# are what a longer match must agree on, so check them
 				# before anything else.
-				if (U32.from_le_bytes(input, match_at + $best_len - 3) ?? 0)
-					== (U32.from_le_bytes(input, in_next + $best_len - 3) ?? 0)
+				# Wrapping arithmetic: positions are far below 2^63, and a checked
+				# add or subtract would put an overflow branch on every candidate.
+				if (U32.from_le_bytes(input, match_at.plus_wrap($best_len).minus_wrap(3)) ?? 0)
+					== (U32.from_le_bytes(input, in_next.plus_wrap($best_len).minus_wrap(3)) ?? 0)
 					and (U32.from_le_bytes(input, match_at) ?? 0)
 						== (U32.from_le_bytes(input, in_next) ?? 0) {
 					$cand_at = match_at
@@ -199,31 +201,35 @@ HcMatchfinder := [].{
 				next_hash4: nh4_0,
 			})
 		} else {
-			var $in_next = in_next0
 			var $tab3 = tab3_0
 			var $tab4 = tab4_0
 			var $next_tab = nt_0
 			var $base = base_0
-			var $cur_pos = $in_next - base_0
+			var $cur_pos = (in_next0 - base_0).to_i64_wrap()
+			# One slide covers the whole run, since a match is far shorter than
+			# a window; positions past the slide go in already relative to the
+			# new base.
+			if $cur_pos + count.to_i64_wrap() - 1 >= Matchfinder.window_size.to_i64_wrap() {
+				$tab3 = Matchfinder.rebase_table($tab3)?
+				$tab4 = Matchfinder.rebase_table($tab4)?
+				$next_tab = Matchfinder.rebase_table($next_tab)?
+				$base = $base + Matchfinder.window_size
+				$cur_pos = $cur_pos - Matchfinder.window_size.to_i64_wrap()
+			} else {
+			}
+			var $in_next = in_next0
 			var $hash3 = nh3_0
 			var $hash4 = nh4_0
 			var $remaining = count
 			while $remaining > 0 {
-				if $cur_pos == Matchfinder.window_size {
-					$tab3 = Matchfinder.rebase_table($tab3)?
-					$tab4 = Matchfinder.rebase_table($tab4)?
-					$next_tab = Matchfinder.rebase_table($next_tab)?
-					$base = $base + Matchfinder.window_size
-					$cur_pos = 0
-				} else {
-				}
 				pos = $cur_pos.to_i16_wrap()
+				slot = $cur_pos.bitwise_and(32767).to_u64_wrap()
 				prev_head = List.get($tab4, $hash4) ?? 0
 				$tab3 = match List.set($tab3, $hash3, pos) {
 					Ok(next) => next
 					Err(_) => return Err(CompressBug)
 				}
-				$next_tab = match List.set($next_tab, $cur_pos, prev_head) {
+				$next_tab = match List.set($next_tab, slot, prev_head) {
 					Ok(next) => next
 					Err(_) => return Err(CompressBug)
 				}
@@ -231,7 +237,6 @@ HcMatchfinder := [].{
 					Ok(next) => next
 					Err(_) => return Err(CompressBug)
 				}
-
 				$in_next = $in_next.plus_wrap(1)
 				next_hashseq = U32.from_le_bytes(input, $in_next) ?? 0
 				$hash3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
