@@ -61,6 +61,13 @@ HcMatchfinder := [].{
 			return Err(CompressBug)
 		} else {
 		}
+		# The chain table is one window long, so every masked chain index is in
+		# range. Establishing that once here lets the bounds test on each chain
+		# read fold away instead of running per candidate.
+		if List.len(next_tab) < Matchfinder.window_size {
+			return Err(CompressBug)
+		} else {
+		}
 		cur_pos = in_next - in_base
 		cutoff = cur_pos.to_i32_wrap() - 32768
 
@@ -91,21 +98,20 @@ HcMatchfinder := [].{
 					$done = 1
 				} else {
 					# Walk the chain until four bytes agree.
-					var $scanning = 1.U64
 					var $found_at = 0.U64
-					while $scanning == 1 {
+					while True {
 						match_at = Matchfinder.match_index(in_base, $node4)
 						if (U32.from_le_bytes(input, match_at) ?? 0) == seq4 {
 							$found_at = match_at
-							$scanning = 0
+							break
 						} else {
-							$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
-							$depth = $depth.minus_wrap(1)
-							if $node4.to_i32() <= cutoff or $depth == 0 {
-								$scanning = 0
-								$done = 1
-							} else {
-							}
+						}
+						$node4 = List.get(next_tab, $node4.to_u64_wrap().bitwise_and(32767)) ?? 0
+						$depth = $depth.minus_wrap(1)
+						if $node4.to_i32() <= cutoff or $depth == 0 {
+							$done = 1
+							break
+						} else {
 						}
 					}
 
@@ -115,7 +121,7 @@ HcMatchfinder := [].{
 						if $best_len >= nice_len {
 							$done = 1
 						} else {
-							$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
+							$node4 = List.get(next_tab, $node4.to_u64_wrap().bitwise_and(32767)) ?? 0
 							$depth = $depth.minus_wrap(1)
 							if $node4.to_i32() <= cutoff or $depth == 0 {
 								$done = 1
@@ -135,9 +141,8 @@ HcMatchfinder := [].{
 
 		# Now look only for matches longer than the one in hand.
 		while $done == 0 {
-			var $scanning = 1.U64
 			var $cand_at = 0.U64
-			while $scanning == 1 {
+			while True {
 				match_at = Matchfinder.match_index(in_base, $node4)
 				# The four bytes ending just past the current best length
 				# are what a longer match must agree on, so check them
@@ -149,15 +154,15 @@ HcMatchfinder := [].{
 					and (U32.from_le_bytes(input, match_at) ?? 0)
 						== (U32.from_le_bytes(input, in_next) ?? 0) {
 					$cand_at = match_at
-					$scanning = 0
+					break
 				} else {
-					$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
-					$depth = $depth.minus_wrap(1)
-					if $node4.to_i32() <= cutoff or $depth == 0 {
-						$scanning = 0
-						$done = 1
-					} else {
-					}
+				}
+				$node4 = List.get(next_tab, $node4.to_u64_wrap().bitwise_and(32767)) ?? 0
+				$depth = $depth.minus_wrap(1)
+				if $node4.to_i32() <= cutoff or $depth == 0 {
+					$done = 1
+					break
+				} else {
 				}
 			}
 
@@ -173,7 +178,7 @@ HcMatchfinder := [].{
 				} else {
 				}
 				if $done == 0 {
-					$node4 = List.get(next_tab, $node4.to_i32().bitwise_and(32767).to_u64_wrap()) ?? 0
+					$node4 = List.get(next_tab, $node4.to_u64_wrap().bitwise_and(32767)) ?? 0
 					$depth = $depth.minus_wrap(1)
 					if $node4.to_i32() <= cutoff or $depth == 0 {
 						$done = 1
