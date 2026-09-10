@@ -273,9 +273,9 @@ CompressLazy := [].{
 		# The matchfinder tables are held as separate values rather than one
 		# record: a record of lists is copied whenever it crosses a call
 		# boundary, which at these sizes would dwarf the search itself.
-		var $tab3 = Matchfinder.init_table(HcMatchfinder.hash3_size)
-		var $tab4 = Matchfinder.init_table(HcMatchfinder.hash4_size)
-		var $nt = Matchfinder.init_table(Matchfinder.window_size)
+		var $tab3 = Matchfinder.init_nodes(HcMatchfinder.hash3_size)
+		var $tab4 = Matchfinder.init_nodes(HcMatchfinder.hash4_size)
+		var $nt = Matchfinder.init_nodes(Matchfinder.window_size)
 		var $base = 0.U64
 		var $nh3 = 0.U64
 		var $nh4 = 0.U64
@@ -321,9 +321,9 @@ CompressLazy := [].{
 				# heads read here are the ones from before the insert, so the walk
 				# starts at the previous occurrence rather than at this position.
 				if $in_next - $base == Matchfinder.window_size {
-					$tab3 = Matchfinder.rebase_table($tab3)?
-					$tab4 = Matchfinder.rebase_table($tab4)?
-					$nt = Matchfinder.rebase_table($nt)?
+					$tab3 = Matchfinder.rebase_nodes($tab3)?
+					$tab4 = Matchfinder.rebase_nodes($tab4)?
+					$nt = Matchfinder.rebase_nodes($nt)?
 					$base = $base + Matchfinder.window_size
 				} else {
 				}
@@ -334,7 +334,7 @@ CompressLazy := [].{
 					cur_pos = $in_next - $base
 					cur_node3 = List.get($tab3, $nh3) ?? 0
 					cur_node4 = List.get($tab4, $nh4) ?? 0
-					pos = cur_pos.to_i16_wrap()
+					pos = (cur_pos + Matchfinder.node_bias).to_u16_wrap()
 					$tab3 = match List.set($tab3, $nh3, pos) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
@@ -536,9 +536,9 @@ CompressLazy := [].{
 		# The matchfinder tables are held as separate values rather than one
 		# record: a record of lists is copied whenever it crosses a call
 		# boundary, which at these sizes would dwarf the search itself.
-		var $tab3 = Matchfinder.init_table(HcMatchfinder.hash3_size)
-		var $tab4 = Matchfinder.init_table(HcMatchfinder.hash4_size)
-		var $nt = Matchfinder.init_table(Matchfinder.window_size)
+		var $tab3 = Matchfinder.init_nodes(HcMatchfinder.hash3_size)
+		var $tab4 = Matchfinder.init_nodes(HcMatchfinder.hash4_size)
+		var $nt = Matchfinder.init_nodes(Matchfinder.window_size)
 		var $base = 0.U64
 		var $nh3 = 0.U64
 		var $nh4 = 0.U64
@@ -595,9 +595,9 @@ CompressLazy := [].{
 				# heads read here are the ones from before the insert, so the walk
 				# starts at the previous occurrence rather than at this position.
 				if $in_next - $base == Matchfinder.window_size {
-					$tab3 = Matchfinder.rebase_table($tab3)?
-					$tab4 = Matchfinder.rebase_table($tab4)?
-					$nt = Matchfinder.rebase_table($nt)?
+					$tab3 = Matchfinder.rebase_nodes($tab3)?
+					$tab4 = Matchfinder.rebase_nodes($tab4)?
+					$nt = Matchfinder.rebase_nodes($nt)?
 					$base = $base + Matchfinder.window_size
 				} else {
 				}
@@ -608,7 +608,7 @@ CompressLazy := [].{
 					cur_pos = $in_next - $base
 					cur_node3 = List.get($tab3, $nh3) ?? 0
 					cur_node4 = List.get($tab4, $nh4) ?? 0
-					pos = cur_pos.to_i16_wrap()
+					pos = (cur_pos + Matchfinder.node_bias).to_u16_wrap()
 					$tab3 = match List.set($tab3, $nh3, pos) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
@@ -685,9 +685,9 @@ CompressLazy := [].{
 							# heads read here are the ones from before the insert, so the walk
 							# starts at the previous occurrence rather than at this position.
 							if $in_next - $base == Matchfinder.window_size {
-								$tab3 = Matchfinder.rebase_table($tab3)?
-								$tab4 = Matchfinder.rebase_table($tab4)?
-								$nt = Matchfinder.rebase_table($nt)?
+								$tab3 = Matchfinder.rebase_nodes($tab3)?
+								$tab4 = Matchfinder.rebase_nodes($tab4)?
+								$nt = Matchfinder.rebase_nodes($nt)?
 								$base = $base + Matchfinder.window_size
 							} else {
 							}
@@ -698,7 +698,7 @@ CompressLazy := [].{
 								cur_pos = $in_next - $base
 								cur_node3 = List.get($tab3, $nh3) ?? 0
 								cur_node4 = List.get($tab4, $nh4) ?? 0
-								pos = cur_pos.to_i16_wrap()
+								pos = (cur_pos + Matchfinder.node_bias).to_u16_wrap()
 								$tab3 = match List.set($tab3, $nh3, pos) {
 									Ok(next) => next
 									Err(_) => return Err(CompressBug)
@@ -764,9 +764,9 @@ CompressLazy := [].{
 								# heads read here are the ones from before the insert, so the walk
 								# starts at the previous occurrence rather than at this position.
 								if $in_next - $base == Matchfinder.window_size {
-									$tab3 = Matchfinder.rebase_table($tab3)?
-									$tab4 = Matchfinder.rebase_table($tab4)?
-									$nt = Matchfinder.rebase_table($nt)?
+									$tab3 = Matchfinder.rebase_nodes($tab3)?
+									$tab4 = Matchfinder.rebase_nodes($tab4)?
+									$nt = Matchfinder.rebase_nodes($nt)?
 									$base = $base + Matchfinder.window_size
 								} else {
 								}
@@ -777,7 +777,7 @@ CompressLazy := [].{
 									cur_pos = $in_next - $base
 									cur_node3 = List.get($tab3, $nh3) ?? 0
 									cur_node4 = List.get($tab4, $nh4) ?? 0
-									pos = cur_pos.to_i16_wrap()
+									pos = (cur_pos + Matchfinder.node_bias).to_u16_wrap()
 									$tab3 = match List.set($tab3, $nh3, pos) {
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)

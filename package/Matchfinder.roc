@@ -32,6 +32,44 @@ Matchfinder := [].{
 	init_table = |num_entries|
 		List.repeat(Matchfinder.initval, num_entries)
 
+	## The hash-chain matchfinder stores positions biased by the window size
+	## instead of signed: a node is `position + window_size`, so the initial
+	## value is zero, a stale entry is rejected by an unsigned comparison
+	## against the current position, the chain slot is the node masked, and
+	## the absolute index is a wrapping add. Nothing in the chain walk then
+	## needs the node sign-extended, which keeps the next read's address one
+	## mask away from the load.
+	node_bias : U64
+	node_bias = 32768
+
+	init_nodes : U64 -> List(U16)
+	init_nodes = |num_entries|
+		List.repeat(0.U16, num_entries)
+
+	## Slide a node table back by one window: a saturating subtract, since a
+	## node already in the first window stays permanently out of it.
+	rebase_nodes : List(U16) -> Try(List(U16), [CompressBug])
+	rebase_nodes = |table0| {
+		var $table = table0
+		n = List.len($table)
+		var $i = 0.U64
+		while $i < n {
+			v = List.get($table, $i) ?? 0
+			slid = if v >= 32768 { v - 32768 } else { 0 }
+			$table = match List.set($table, $i, slid) {
+				Ok(next) => next
+				Err(_) => return Err(CompressBug)
+			}
+			$i = $i + 1
+		}
+		Ok($table)
+	}
+
+	## Absolute input index of a biased node.
+	node_index : U64, U16 -> U64
+	node_index = |in_base, node|
+		in_base.plus_wrap(node.to_u64()).minus_wrap(Matchfinder.node_bias)
+
 	## Slide a table back by one window, so its entries stay relative to the
 	## new base.
 	##

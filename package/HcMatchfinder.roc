@@ -37,9 +37,9 @@ HcMatchfinder := [].{
 	## as one record: a record of lists is copied when it crosses a call
 	## boundary, which for tables this size costs more than the search itself.
 	State : {
-		hash3 : List(I16),
-		hash4 : List(I16),
-		next_tab : List(I16),
+		hash3 : List(U16),
+		hash4 : List(U16),
+		next_tab : List(U16),
 		in_cur_base : U64,
 		next_hash3 : U64,
 		next_hash4 : U64,
@@ -61,21 +61,22 @@ HcMatchfinder := [].{
 	## so the tables never cross this call as owned values: three large lists
 	## handed back in a record would cost a retain and a release apiece on every
 	## position, and this is the innermost per-position call.
-	longest_match : List(I16), I16, I16, U64, List(U8), U64, U64, U64, U64, U64 -> Try(Match, [CompressBug])
+	longest_match : List(U16), U16, U16, U64, List(U8), U64, U64, U64, U64, U64 -> Try(Match, [CompressBug])
 	longest_match = |next_tab, cur_node3, cur_node4, in_base, input, in_next, best_len_in, max_len, nice_len, max_search_depth| {
 		if List.len(input) < 4 {
 			return Err(CompressBug)
 		} else {
 		}
 		# The chain table is one window long, so every masked chain index is in
-		# range. Establishing that once here lets the bounds test on each chain
-		# read fold away instead of running per candidate.
-		if List.len(next_tab) < Matchfinder.window_size {
-			return Err(CompressBug)
-		} else {
-		}
+		# range, and a length guard here would let each chain read's bounds
+		# test fold away. It is deliberately absent: the test costs nothing on
+		# the walk's critical path, while its survival keeps the masked index
+		# as a separate value that the load then scales for free. Folded, the
+		# mask and scale merge into one instruction ahead of the load, which
+		# is a cycle more on every step of the chain.
+		# A node at or below the current position, in the biased space the
+		# tables use, is out of the window.
 		cur_pos = in_next - in_base
-		cutoff = cur_pos.to_i32_wrap() - 32768
 
 		var $best_len = best_len_in
 		var $best_match_at = in_next
@@ -86,11 +87,11 @@ HcMatchfinder := [].{
 		var $done = 0.U64
 
 		if $best_len < 4 {
-			if cur_node3.to_i32() <= cutoff {
+			if cur_node3.to_u64() <= cur_pos {
 				$done = 1
 			} else {
 				if $best_len < 3 {
-					match_at = Matchfinder.match_index(in_base, cur_node3)
+					match_at = Matchfinder.node_index(in_base, cur_node3)
 					if (U32.from_le_bytes(input, match_at) ?? 0).bitwise_and(0xFFFFFF)
 						== seq4.bitwise_and(0xFFFFFF) {
 						$best_len = 3
@@ -100,21 +101,21 @@ HcMatchfinder := [].{
 				} else {
 				}
 
-				if $node4.to_i32() <= cutoff {
+				if $node4.to_u64() <= cur_pos {
 					$done = 1
 				} else {
 					# Walk the chain until four bytes agree.
 					var $found_at = 0.U64
 					while True {
-						match_at = Matchfinder.match_index(in_base, $node4)
+						match_at = Matchfinder.node_index(in_base, $node4)
 						if (U32.from_le_bytes(input, match_at) ?? 0) == seq4 {
 							$found_at = match_at
 							break
 						} else {
 						}
-						$node4 = List.get(next_tab, $node4.to_u64_wrap().bitwise_and(32767)) ?? 0
+						$node4 = List.get(next_tab, $node4.to_u64().bitwise_and(32767)) ?? 0
 						$depth = $depth.minus_wrap(1)
-						if $node4.to_i32() <= cutoff or $depth == 0 {
+						if $node4.to_u64() <= cur_pos or $depth == 0 {
 							$done = 1
 							break
 						} else {
@@ -127,9 +128,9 @@ HcMatchfinder := [].{
 						if $best_len >= nice_len {
 							$done = 1
 						} else {
-							$node4 = List.get(next_tab, $node4.to_u64_wrap().bitwise_and(32767)) ?? 0
+							$node4 = List.get(next_tab, $node4.to_u64().bitwise_and(32767)) ?? 0
 							$depth = $depth.minus_wrap(1)
-							if $node4.to_i32() <= cutoff or $depth == 0 {
+							if $node4.to_u64() <= cur_pos or $depth == 0 {
 								$done = 1
 							} else {
 							}
@@ -139,7 +140,7 @@ HcMatchfinder := [].{
 				}
 			}
 		} else {
-			if $node4.to_i32() <= cutoff or $best_len >= nice_len {
+			if $node4.to_u64() <= cur_pos or $best_len >= nice_len {
 				$done = 1
 			} else {
 			}
@@ -149,7 +150,7 @@ HcMatchfinder := [].{
 		while $done == 0 {
 			var $cand_at = 0.U64
 			while True {
-				match_at = Matchfinder.match_index(in_base, $node4)
+				match_at = Matchfinder.node_index(in_base, $node4)
 				# The four bytes ending just past the current best length
 				# are what a longer match must agree on, so check them
 				# before anything else.
@@ -163,9 +164,9 @@ HcMatchfinder := [].{
 					break
 				} else {
 				}
-				$node4 = List.get(next_tab, $node4.to_u64_wrap().bitwise_and(32767)) ?? 0
+				$node4 = List.get(next_tab, $node4.to_u64().bitwise_and(32767)) ?? 0
 				$depth = $depth.minus_wrap(1)
-				if $node4.to_i32() <= cutoff or $depth == 0 {
+				if $node4.to_u64() <= cur_pos or $depth == 0 {
 					$done = 1
 					break
 				} else {
@@ -184,9 +185,9 @@ HcMatchfinder := [].{
 				} else {
 				}
 				if $done == 0 {
-					$node4 = List.get(next_tab, $node4.to_u64_wrap().bitwise_and(32767)) ?? 0
+					$node4 = List.get(next_tab, $node4.to_u64().bitwise_and(32767)) ?? 0
 					$depth = $depth.minus_wrap(1)
-					if $node4.to_i32() <= cutoff or $depth == 0 {
+					if $node4.to_u64() <= cur_pos or $depth == 0 {
 						$done = 1
 					} else {
 					}
@@ -200,7 +201,7 @@ HcMatchfinder := [].{
 	}
 
 	## Insert `count` positions into the tables without searching them.
-	skip_bytes : List(I16), List(I16), List(I16), U64, U64, U64, List(U8), U64, U64, U64 -> Try(State, [CompressBug])
+	skip_bytes : List(U16), List(U16), List(U16), U64, U64, U64, List(U8), U64, U64, U64 -> Try(State, [CompressBug])
 	skip_bytes = |tab3_0, tab4_0, nt_0, base_0, nh3_0, nh4_0, input, in_next0, in_end, count| {
 		if count + 5 > in_end - in_next0 {
 			Ok({
@@ -221,9 +222,9 @@ HcMatchfinder := [].{
 			# a window; positions past the slide go in already relative to the
 			# new base.
 			if $cur_pos + count.to_i64_wrap() - 1 >= Matchfinder.window_size.to_i64_wrap() {
-				$tab3 = Matchfinder.rebase_table($tab3)?
-				$tab4 = Matchfinder.rebase_table($tab4)?
-				$next_tab = Matchfinder.rebase_table($next_tab)?
+				$tab3 = Matchfinder.rebase_nodes($tab3)?
+				$tab4 = Matchfinder.rebase_nodes($tab4)?
+				$next_tab = Matchfinder.rebase_nodes($next_tab)?
 				$base = $base + Matchfinder.window_size
 				$cur_pos = $cur_pos - Matchfinder.window_size.to_i64_wrap()
 			} else {
@@ -245,7 +246,7 @@ HcMatchfinder := [].{
 			var $hash4 = nh4_0
 			var $remaining = count
 			while $remaining > 0 {
-				pos = $cur_pos.to_i16_wrap()
+				pos = $cur_pos.plus_wrap(Matchfinder.node_bias.to_i64_wrap()).to_u16_wrap()
 				slot = $cur_pos.to_u64_wrap().bitwise_and(32767)
 				prev_head = List.get($tab4, $hash4) ?? 0
 				$tab3 = match List.set($tab3, $hash3, pos) {
