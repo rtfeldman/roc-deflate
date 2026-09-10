@@ -24,6 +24,12 @@ HcMatchfinder := [].{
 	hash4_order : U64
 	hash4_order = 16
 
+	hash3_size : U64
+	hash3_size = 32768
+
+	hash4_size : U64
+	hash4_size = 65536
+
 	## Tables plus the position base they are relative to, and the hashes
 	## precomputed for the coming position.
 	##
@@ -222,13 +228,25 @@ HcMatchfinder := [].{
 				$cur_pos = $cur_pos - Matchfinder.window_size.to_i64_wrap()
 			} else {
 			}
+			# Each table is exactly one hash space or one window long, and the
+			# incoming hashes are already reduced to their table's size.
+			# Establishing both once here lets the bounds test on every table
+			# access in the loop fold away instead of running per byte.
+			if List.len($tab3) < HcMatchfinder.hash3_size
+				or List.len($tab4) < HcMatchfinder.hash4_size
+				or List.len($next_tab) < Matchfinder.window_size
+				or nh3_0 >= HcMatchfinder.hash3_size
+				or nh4_0 >= HcMatchfinder.hash4_size {
+				return Err(CompressBug)
+			} else {
+			}
 			var $in_next = in_next0
 			var $hash3 = nh3_0
 			var $hash4 = nh4_0
 			var $remaining = count
 			while $remaining > 0 {
 				pos = $cur_pos.to_i16_wrap()
-				slot = $cur_pos.bitwise_and(32767).to_u64_wrap()
+				slot = $cur_pos.to_u64_wrap().bitwise_and(32767)
 				prev_head = List.get($tab4, $hash4) ?? 0
 				$tab3 = match List.set($tab3, $hash3, pos) {
 					Ok(next) => next

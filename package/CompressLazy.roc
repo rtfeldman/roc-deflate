@@ -273,8 +273,8 @@ CompressLazy := [].{
 		# The matchfinder tables are held as separate values rather than one
 		# record: a record of lists is copied whenever it crosses a call
 		# boundary, which at these sizes would dwarf the search itself.
-		var $tab3 = Matchfinder.init_table(32768)
-		var $tab4 = Matchfinder.init_table(65536)
+		var $tab3 = Matchfinder.init_table(HcMatchfinder.hash3_size)
+		var $tab4 = Matchfinder.init_table(HcMatchfinder.hash4_size)
 		var $nt = Matchfinder.init_table(Matchfinder.window_size)
 		var $base = 0.U64
 		var $nh3 = 0.U64
@@ -536,8 +536,8 @@ CompressLazy := [].{
 		# The matchfinder tables are held as separate values rather than one
 		# record: a record of lists is copied whenever it crosses a call
 		# boundary, which at these sizes would dwarf the search itself.
-		var $tab3 = Matchfinder.init_table(32768)
-		var $tab4 = Matchfinder.init_table(65536)
+		var $tab3 = Matchfinder.init_table(HcMatchfinder.hash3_size)
+		var $tab4 = Matchfinder.init_table(HcMatchfinder.hash4_size)
 		var $nt = Matchfinder.init_table(Matchfinder.window_size)
 		var $base = 0.U64
 		var $nh3 = 0.U64
