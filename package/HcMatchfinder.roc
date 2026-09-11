@@ -158,8 +158,7 @@ HcMatchfinder := [].{
 				# add or subtract would put an overflow branch on every candidate.
 				if (U32.from_le_bytes(input, match_at.plus_wrap($best_len).minus_wrap(3)) ?? 0)
 					== (U32.from_le_bytes(input, in_next.plus_wrap($best_len).minus_wrap(3)) ?? 0)
-					and (U32.from_le_bytes(input, match_at) ?? 0)
-						== (U32.from_le_bytes(input, in_next) ?? 0) {
+					and (U32.from_le_bytes(input, match_at) ?? 0) == seq4 {
 					$cand_at = match_at
 					break
 				} else {
