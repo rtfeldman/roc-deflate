@@ -24,6 +24,10 @@ HtMatchfinder := [].{
 	required_nbytes : U64
 	required_nbytes = 5
 
+	## Two entries per bucket, one bucket per hash value.
+	table_size : U64
+	table_size = 65536
+
 	## The two entries of each bucket sit next to each other, so a bucket is
 	## one cache line's worth of adjacent slots rather than two strided reads.
 	##
@@ -132,8 +136,16 @@ HtMatchfinder := [].{
 	## Insert `count` positions into the buckets without searching them.
 	skip_bytes : List(I16), U64, U64, List(U8), U64, U64, U64 -> Try(State, [CompressBug])
 	skip_bytes = |tab_0, base_0, hash_0, input, in_next0, in_end, count| {
-		if count + HtMatchfinder.required_nbytes > in_end - in_next0 {
+		# The run ends at `end`, and every hash read the loop makes lies within
+		# `required_nbytes` of it. Bounding the run against the input's length
+		# here, and the bucket table's size once after any slide, lets the
+		# range prover discharge the bounds test on every read and bucket
+		# access in the loop, so each byte pays only for the work itself.
+		end = in_next0 + count
+		if end + HtMatchfinder.required_nbytes > in_end {
 			Ok({ hash_tab: tab_0, in_cur_base: base_0, next_hash: hash_0 })
+		} else if in_end > List.len(input) {
+			Err(CompressBug)
 		} else {
 			var $tab = tab_0
 			var $base = base_0
@@ -146,15 +158,14 @@ HtMatchfinder := [].{
 				$cur_pos = $cur_pos - Matchfinder.window_size.to_i64_wrap()
 			} else {
 			}
+			if List.len($tab) < HtMatchfinder.table_size {
+				return Err(CompressBug)
+			} else {
+			}
 
 			var $hash = hash_0
-			var $remaining = count
-			while $remaining > 0 {
+			while $in_next < end {
 				slot0 = $hash.bitwise_and(0x7FFF) * 2
-				if slot0 + 1 >= List.len($tab) {
-					return Err(CompressBug)
-				} else {
-				}
 				first = List.get($tab, slot0) ?? 0
 				tab1 = match List.set($tab, slot0 + 1, first) {
 					Ok(next) => next
@@ -165,10 +176,9 @@ HtMatchfinder := [].{
 					Err(_) => return Err(CompressBug)
 				}
 
-				$in_next = $in_next.plus_wrap(1)
+				$in_next = $in_next + 1
 				$hash = Matchfinder.lz_hash(U32.from_le_bytes(input, $in_next) ?? 0, HtMatchfinder.hash_order)
 				$cur_pos = $cur_pos.plus_wrap(1)
-				$remaining = $remaining.minus_wrap(1)
 			}
 			Ok({ hash_tab: $tab, in_cur_base: $base, next_hash: $hash })
 		}
