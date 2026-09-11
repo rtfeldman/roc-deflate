@@ -114,51 +114,43 @@ Matchfinder := [].{
 	## positions, which is what makes the word reads safe.
 	lz_extend : List(U8), U64, U64, U64, U64 -> U64
 	lz_extend = |input, str_at, match_at, start_len, max_len| {
-		var $len = start_len
-		var $diff = 0.U64
-		var $found = 0.U64
-
 		# Wrapping index arithmetic: a checked add would put an overflow branch
 		# ahead of every word read, and the reads' own bounds tests already
 		# reject any position that wrapped.
+		var $len = start_len
 
-		# Four unrolled word steps cover most matches without loop overhead.
-		if max_len - $len >= 32 {
+		# Four word compares cover most matches. Each returns the match length
+		# as soon as its words differ, so the loop carries nothing but its
+		# counter and unrolls into straight compares.
+		if max_len.minus_wrap($len) >= 32 {
 			var $step = 0.U64
-			while $step < 4 and $found == 0 {
-				v = (U64.from_le_bytes(input, match_at.plus_wrap($len)) ?? 0)
+			while $step < 4 {
+				d = (U64.from_le_bytes(input, match_at.plus_wrap($len)) ?? 0)
 					.bitwise_xor(U64.from_le_bytes(input, str_at.plus_wrap($len)) ?? 0)
-				if v != 0 {
-					$diff = v
-					$found = 1
+				if d != 0 {
+					return $len.plus_wrap(d.count_trailing_zero_bits().to_u64().shr_zf_wrap(3))
 				} else {
-					$len = $len.plus_wrap(8)
-					$step = $step.plus_wrap(1)
 				}
-			}
-		} else {
-		}
-
-		while $found == 0 and $len.plus_wrap(8) <= max_len {
-			v = (U64.from_le_bytes(input, match_at.plus_wrap($len)) ?? 0)
-				.bitwise_xor(U64.from_le_bytes(input, str_at.plus_wrap($len)) ?? 0)
-			if v != 0 {
-				$diff = v
-				$found = 1
-			} else {
 				$len = $len.plus_wrap(8)
+				$step = $step.plus_wrap(1)
 			}
+		} else {
 		}
 
-		if $found == 1 {
-			$len + $diff.count_trailing_zero_bits().to_u64().shr_zf_wrap(3)
-		} else {
-			var $tail = $len
-			while $tail < max_len
-				and (List.get(input, match_at.plus_wrap($tail)) ?? 0) == (List.get(input, str_at.plus_wrap($tail)) ?? 0) {
-				$tail = $tail.plus_wrap(1)
+		while $len.plus_wrap(8) <= max_len {
+			d = (U64.from_le_bytes(input, match_at.plus_wrap($len)) ?? 0)
+				.bitwise_xor(U64.from_le_bytes(input, str_at.plus_wrap($len)) ?? 0)
+			if d != 0 {
+				return $len.plus_wrap(d.count_trailing_zero_bits().to_u64().shr_zf_wrap(3))
+			} else {
 			}
-			$tail
+			$len = $len.plus_wrap(8)
 		}
+
+		while $len < max_len
+			and (List.get(input, match_at.plus_wrap($len)) ?? 0) == (List.get(input, str_at.plus_wrap($len)) ?? 0) {
+			$len = $len.plus_wrap(1)
+		}
+		$len
 	}
 }
