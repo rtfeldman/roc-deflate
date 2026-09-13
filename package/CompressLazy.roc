@@ -273,9 +273,7 @@ CompressLazy := [].{
 		# The matchfinder tables are held as separate values rather than one
 		# record: a record of lists is copied whenever it crosses a call
 		# boundary, which at these sizes would dwarf the search itself.
-		var $tab3 = Matchfinder.init_nodes(HcMatchfinder.hash3_size)
-		var $tab4 = Matchfinder.init_nodes(HcMatchfinder.hash4_size)
-		var $nt = Matchfinder.init_nodes(Matchfinder.window_size)
+		var $mf = HcMatchfinder.init_tables({})
 		var $base = 0.U64
 		var $nh3 = 0.U64
 		var $nh4 = 0.U64
@@ -321,9 +319,7 @@ CompressLazy := [].{
 				# heads read here are the ones from before the insert, so the walk
 				# starts at the previous occurrence rather than at this position.
 				if $in_next - $base == Matchfinder.window_size {
-					$tab3 = Matchfinder.rebase_nodes($tab3)?
-					$tab4 = Matchfinder.rebase_nodes($tab4)?
-					$nt = Matchfinder.rebase_nodes($nt)?
+					$mf = Matchfinder.rebase_nodes($mf)?
 					$base = $base + Matchfinder.window_size
 				} else {
 				}
@@ -332,18 +328,18 @@ CompressLazy := [].{
 					# Not enough bytes left to read the next position's hash sequence.
 				} else {
 					cur_pos = $in_next - $base
-					cur_node3 = List.get($tab3, $nh3) ?? 0
-					cur_node4 = List.get($tab4, $nh4) ?? 0
+					cur_node3 = List.get($mf, HcMatchfinder.hash3_base + $nh3) ?? 0
+					cur_node4 = List.get($mf, HcMatchfinder.hash4_base + $nh4) ?? 0
 					pos = (cur_pos + Matchfinder.node_bias).to_u16_wrap()
-					$tab3 = match List.set($tab3, $nh3, pos) {
+					$mf = match List.set($mf, HcMatchfinder.hash3_base + $nh3, pos) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
-					$tab4 = match List.set($tab4, $nh4, pos) {
+					$mf = match List.set($mf, HcMatchfinder.hash4_base + $nh4, pos) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
-					$nt = match List.set($nt, cur_pos, cur_node4) {
+					$mf = match List.set($mf, cur_pos, cur_node4) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
@@ -351,7 +347,7 @@ CompressLazy := [].{
 					$nh3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
 					$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
 					$found = HcMatchfinder.longest_match(
-						$nt,
+						$mf,
 						cur_node3,
 						cur_node4,
 						$base,
@@ -397,10 +393,8 @@ CompressLazy := [].{
 					$seq_idx = $seq_idx + 1
 					$litrunlen = 0
 
-					skipped = HcMatchfinder.skip_bytes($tab3, $tab4, $nt, $base, $nh3, $nh4, input, $in_next + 1, in_end, $found.length - 1)?
-					$tab3 = skipped.hash3
-					$tab4 = skipped.hash4
-					$nt = skipped.next_tab
+					skipped = HcMatchfinder.skip_bytes($mf, $base, $nh3, $nh4, input, $in_next + 1, in_end, $found.length - 1)?
+					$mf = skipped.tab
 					$base = skipped.in_cur_base
 					$nh3 = skipped.next_hash3
 					$nh4 = skipped.next_hash4
@@ -536,9 +530,7 @@ CompressLazy := [].{
 		# The matchfinder tables are held as separate values rather than one
 		# record: a record of lists is copied whenever it crosses a call
 		# boundary, which at these sizes would dwarf the search itself.
-		var $tab3 = Matchfinder.init_nodes(HcMatchfinder.hash3_size)
-		var $tab4 = Matchfinder.init_nodes(HcMatchfinder.hash4_size)
-		var $nt = Matchfinder.init_nodes(Matchfinder.window_size)
+		var $mf = HcMatchfinder.init_tables({})
 		var $base = 0.U64
 		var $nh3 = 0.U64
 		var $nh4 = 0.U64
@@ -595,9 +587,7 @@ CompressLazy := [].{
 				# heads read here are the ones from before the insert, so the walk
 				# starts at the previous occurrence rather than at this position.
 				if $in_next - $base == Matchfinder.window_size {
-					$tab3 = Matchfinder.rebase_nodes($tab3)?
-					$tab4 = Matchfinder.rebase_nodes($tab4)?
-					$nt = Matchfinder.rebase_nodes($nt)?
+					$mf = Matchfinder.rebase_nodes($mf)?
 					$base = $base + Matchfinder.window_size
 				} else {
 				}
@@ -606,18 +596,18 @@ CompressLazy := [].{
 					# Not enough bytes left to read the next position's hash sequence.
 				} else {
 					cur_pos = $in_next - $base
-					cur_node3 = List.get($tab3, $nh3) ?? 0
-					cur_node4 = List.get($tab4, $nh4) ?? 0
+					cur_node3 = List.get($mf, HcMatchfinder.hash3_base + $nh3) ?? 0
+					cur_node4 = List.get($mf, HcMatchfinder.hash4_base + $nh4) ?? 0
 					pos = (cur_pos + Matchfinder.node_bias).to_u16_wrap()
-					$tab3 = match List.set($tab3, $nh3, pos) {
+					$mf = match List.set($mf, HcMatchfinder.hash3_base + $nh3, pos) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
-					$tab4 = match List.set($tab4, $nh4, pos) {
+					$mf = match List.set($mf, HcMatchfinder.hash4_base + $nh4, pos) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
-					$nt = match List.set($nt, cur_pos, cur_node4) {
+					$mf = match List.set($mf, cur_pos, cur_node4) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
@@ -625,7 +615,7 @@ CompressLazy := [].{
 					$nh3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
 					$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
 					$found = HcMatchfinder.longest_match(
-						$nt,
+						$mf,
 						cur_node3,
 						cur_node4,
 						$base,
@@ -685,9 +675,7 @@ CompressLazy := [].{
 							# heads read here are the ones from before the insert, so the walk
 							# starts at the previous occurrence rather than at this position.
 							if $in_next - $base == Matchfinder.window_size {
-								$tab3 = Matchfinder.rebase_nodes($tab3)?
-								$tab4 = Matchfinder.rebase_nodes($tab4)?
-								$nt = Matchfinder.rebase_nodes($nt)?
+								$mf = Matchfinder.rebase_nodes($mf)?
 								$base = $base + Matchfinder.window_size
 							} else {
 							}
@@ -696,18 +684,18 @@ CompressLazy := [].{
 								# Not enough bytes left to read the next position's hash sequence.
 							} else {
 								cur_pos = $in_next - $base
-								cur_node3 = List.get($tab3, $nh3) ?? 0
-								cur_node4 = List.get($tab4, $nh4) ?? 0
+								cur_node3 = List.get($mf, HcMatchfinder.hash3_base + $nh3) ?? 0
+								cur_node4 = List.get($mf, HcMatchfinder.hash4_base + $nh4) ?? 0
 								pos = (cur_pos + Matchfinder.node_bias).to_u16_wrap()
-								$tab3 = match List.set($tab3, $nh3, pos) {
+								$mf = match List.set($mf, HcMatchfinder.hash3_base + $nh3, pos) {
 									Ok(next) => next
 									Err(_) => return Err(CompressBug)
 								}
-								$tab4 = match List.set($tab4, $nh4, pos) {
+								$mf = match List.set($mf, HcMatchfinder.hash4_base + $nh4, pos) {
 									Ok(next) => next
 									Err(_) => return Err(CompressBug)
 								}
-								$nt = match List.set($nt, cur_pos, cur_node4) {
+								$mf = match List.set($mf, cur_pos, cur_node4) {
 									Ok(next) => next
 									Err(_) => return Err(CompressBug)
 								}
@@ -715,7 +703,7 @@ CompressLazy := [].{
 								$nh3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
 								$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
 								$nxt = HcMatchfinder.longest_match(
-									$nt,
+									$mf,
 									cur_node3,
 									cur_node4,
 									$base,
@@ -764,9 +752,7 @@ CompressLazy := [].{
 								# heads read here are the ones from before the insert, so the walk
 								# starts at the previous occurrence rather than at this position.
 								if $in_next - $base == Matchfinder.window_size {
-									$tab3 = Matchfinder.rebase_nodes($tab3)?
-									$tab4 = Matchfinder.rebase_nodes($tab4)?
-									$nt = Matchfinder.rebase_nodes($nt)?
+									$mf = Matchfinder.rebase_nodes($mf)?
 									$base = $base + Matchfinder.window_size
 								} else {
 								}
@@ -775,18 +761,18 @@ CompressLazy := [].{
 									# Not enough bytes left to read the next position's hash sequence.
 								} else {
 									cur_pos = $in_next - $base
-									cur_node3 = List.get($tab3, $nh3) ?? 0
-									cur_node4 = List.get($tab4, $nh4) ?? 0
+									cur_node3 = List.get($mf, HcMatchfinder.hash3_base + $nh3) ?? 0
+									cur_node4 = List.get($mf, HcMatchfinder.hash4_base + $nh4) ?? 0
 									pos = (cur_pos + Matchfinder.node_bias).to_u16_wrap()
-									$tab3 = match List.set($tab3, $nh3, pos) {
+									$mf = match List.set($mf, HcMatchfinder.hash3_base + $nh3, pos) {
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)
 									}
-									$tab4 = match List.set($tab4, $nh4, pos) {
+									$mf = match List.set($mf, HcMatchfinder.hash4_base + $nh4, pos) {
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)
 									}
-									$nt = match List.set($nt, cur_pos, cur_node4) {
+									$mf = match List.set($mf, cur_pos, cur_node4) {
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)
 									}
@@ -794,7 +780,7 @@ CompressLazy := [].{
 									$nh3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
 									$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
 									$nxt2 = HcMatchfinder.longest_match(
-										$nt,
+										$mf,
 										cur_node3,
 										cur_node4,
 										$base,
@@ -887,10 +873,8 @@ CompressLazy := [].{
 							$litrunlen = 0
 
 							if $skip_after > 0 {
-								skipped = HcMatchfinder.skip_bytes($tab3, $tab4, $nt, $base, $nh3, $nh4, input, $in_next, in_end, $skip_after)?
-								$tab3 = skipped.hash3
-								$tab4 = skipped.hash4
-								$nt = skipped.next_tab
+								skipped = HcMatchfinder.skip_bytes($mf, $base, $nh3, $nh4, input, $in_next, in_end, $skip_after)?
+								$mf = skipped.tab
 								$base = skipped.in_cur_base
 								$nh3 = skipped.next_hash3
 								$nh4 = skipped.next_hash4
