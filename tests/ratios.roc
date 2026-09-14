@@ -11,7 +11,7 @@
 ##
 ##     roc build --opt=speed tests/ratios.roc && ./tests/ratios
 app [main!] {
-	pf: platform "https://github.com/niclas-ahden/basic-cli/releases/download/0.22.1/DobkAk7zNyqAgqh2Riaj5c5DtWtKhd5iVYE5RFa6izcd.tar.zst",
+	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.23.0-rc1/3hT3SoHZ6qbEsa9qVFLUW3547U5LeoNd1KbpqLpz4r1i.tar.zst",
 	deflate: "../package/main.roc",
 }
 

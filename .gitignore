@@ -7,8 +7,15 @@
 .envrc
 generated-docs/
 
-# Benchmark corpus (Silesia), downloaded on demand by benchmark/run.roc
+# Benchmark corpus (Silesia), downloaded on demand by benchmark/corpus.sh
 benchmark/.corpus/
+
+# C reference benchmark build tree (libdeflate, zlib-ng, cbench)
+benchmark/c/.build/
 
 # The catch-alls above ignore extensionless files, but this one must ship
 !LICENSE
+
+# Decompression benchmark caches (streams + builds), regenerated on demand
+benchmark/.streams/
+benchmark/.build/
