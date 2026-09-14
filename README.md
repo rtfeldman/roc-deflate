@@ -11,15 +11,21 @@ View the API documentation at [https://niclas-ahden.github.io/roc-deflate/](http
 
 ```roc
 app [main!] {
-    pf: platform "https://github.com/niclas-ahden/basic-cli/releases/download/0.22.1/DobkAk7zNyqAgqh2Riaj5c5DtWtKhd5iVYE5RFa6izcd.tar.zst",
-    deflate: "https://github.com/niclas-ahden/roc-deflate/releases/download/0.1.0/9d7QRzf6vgYMDqXgTsL5sTh8B475yeL8KUAp8TJKs2Q5.tar.zst",
+    pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.23.0-rc1/3hT3SoHZ6qbEsa9qVFLUW3547U5LeoNd1KbpqLpz4r1i.tar.zst",
+    deflate: "https://github.com/niclas-ahden/roc-deflate/releases/download/0.3.0/9d7QRzf6vgYMDqXgTsL5sTh8B475yeL8KUAp8TJKs2Q5.tar.zst",
 }
 
 import pf.Stdout
+import pf.OsStr
 import deflate.Deflate
 
-main! = |_| {
-    original = "Bootcut Jeans, salmon shirt, I have a skin routine and my elbows hurt.".to_utf8()
+main! = |args| {
+    # Compresses the text you pass on the command line, or this line if you
+    # pass none
+    original = match args.get(1) {
+        Ok(arg) => OsStr.display(arg).to_utf8()
+        Err(_) => "Bootcut Jeans, salmon shirt, I have a skin routine and my elbows hurt.".to_utf8()
+    }
 
     compressed = Deflate.compress(original, Balanced)
     Stdout.line!("Compressed ${original.len().to_str()} bytes to ${compressed.len().to_str()}")?
