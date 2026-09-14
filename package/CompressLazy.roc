@@ -277,10 +277,9 @@ CompressLazy := [].{
 		var $base = 0.U64
 		var $nh3 = 0.U64
 		var $nh4 = 0.U64
-		var $seqs = List.repeat(
-			{ litrunlen_and_length: 0.U32, offset: 0.U16, offset_slot: 0.U16 },
-			CompressLazy.seq_store_length + 1,
-		)
+		# One allocation for the whole stream: a block appends its sequences and
+		# the run terminator, and clearing the list afterwards keeps the capacity.
+		var $seqs = List.with_capacity(CompressLazy.seq_store_length + 1)
 
 		var $blocking = 1.U64
 		while $blocking == 1 {
@@ -296,7 +295,7 @@ CompressLazy := [].{
 			var $num_observations = 0.U64
 			var $freqs_litlen = List.repeat(0.U32, DeflateTables.num_litlen_syms)
 			var $freqs_offset = List.repeat(0.U32, DeflateTables.num_offset_syms)
-			var $seq_idx = 0.U64
+			$seqs = List.clear($seqs)
 			var $litrunlen = 0.U32
 			min_len = CompressLazy.calculate_min_match_len(
 				input,
@@ -382,15 +381,11 @@ CompressLazy := [].{
 						Err(_) => return Err(CompressBug)
 					}
 					$num_new_observations = $num_new_observations + 1
-					$seqs = match List.set($seqs, $seq_idx, {
+					$seqs = List.append($seqs, {
 						litrunlen_and_length: $litrunlen.bitwise_or($found.length.to_u32_wrap().shl_wrap(BlockOut.seq_length_shift)),
 						offset: $found.offset.to_u16_wrap(),
 						offset_slot: offset_slot.to_u16_wrap(),
-					}) {
-						Ok(next) => next
-						Err(_) => return Err(CompressBug)
-					}
-					$seq_idx = $seq_idx + 1
+					})
 					$litrunlen = 0
 
 					skipped = HcMatchfinder.skip_bytes($mf, $base, $nh3, $nh4, input, $in_next + 1, in_end, $found.length - 1)?
@@ -417,7 +412,7 @@ CompressLazy := [].{
 					$in_next = $in_next + 1
 				}
 
-				if $in_next >= in_max_block_end or $seq_idx >= CompressLazy.seq_store_length {
+				if $in_next >= in_max_block_end or List.len($seqs) >= CompressLazy.seq_store_length {
 					$in_block = 0
 				} else if $num_new_observations >= CompressLazy.observations_per_block_check
 					and $in_next - in_block_begin >= CompressLazy.min_block_length
@@ -435,14 +430,11 @@ CompressLazy := [].{
 				}
 			}
 
-			$seqs = match List.set($seqs, $seq_idx, {
+			$seqs = List.append($seqs, {
 				litrunlen_and_length: $litrunlen,
 				offset: 0.U16,
 				offset_slot: 0.U16,
-			}) {
-				Ok(next) => next
-				Err(_) => return Err(CompressBug)
-			}
+			})
 			$freqs_litlen = match List.set($freqs_litlen, DeflateTables.end_of_block,
 				(List.get($freqs_litlen, DeflateTables.end_of_block) ?? 0) + 1) {
 				Ok(next) => next
@@ -534,10 +526,9 @@ CompressLazy := [].{
 		var $base = 0.U64
 		var $nh3 = 0.U64
 		var $nh4 = 0.U64
-		var $seqs = List.repeat(
-			{ litrunlen_and_length: 0.U32, offset: 0.U16, offset_slot: 0.U16 },
-			CompressLazy.seq_store_length + 1,
-		)
+		# One allocation for the whole stream: a block appends its sequences and
+		# the run terminator, and clearing the list afterwards keeps the capacity.
+		var $seqs = List.with_capacity(CompressLazy.seq_store_length + 1)
 
 		var $blocking = 1.U64
 		while $blocking == 1 {
@@ -555,7 +546,7 @@ CompressLazy := [].{
 			var $num_observations = 0.U64
 			var $freqs_litlen = List.repeat(0.U32, DeflateTables.num_litlen_syms)
 			var $freqs_offset = List.repeat(0.U32, DeflateTables.num_offset_syms)
-			var $seq_idx = 0.U64
+			$seqs = List.clear($seqs)
 			var $litrunlen = 0.U32
 			var $min_len = CompressLazy.calculate_min_match_len(
 				input,
@@ -861,15 +852,11 @@ CompressLazy := [].{
 								Err(_) => return Err(CompressBug)
 							}
 							$num_new_observations = $num_new_observations + 1
-							$seqs = match List.set($seqs, $seq_idx, {
+							$seqs = List.append($seqs, {
 								litrunlen_and_length: $litrunlen.bitwise_or($cur_len.to_u32_wrap().shl_wrap(BlockOut.seq_length_shift)),
 								offset: $cur_offset.to_u16_wrap(),
 								offset_slot: offset_slot.to_u16_wrap(),
-							}) {
-								Ok(next) => next
-								Err(_) => return Err(CompressBug)
-							}
-							$seq_idx = $seq_idx + 1
+							})
 							$litrunlen = 0
 
 							if $skip_after > 0 {
@@ -888,7 +875,7 @@ CompressLazy := [].{
 				}
 
 				# Time to end the block?
-				if $in_next >= in_max_block_end or $seq_idx >= CompressLazy.seq_store_length {
+				if $in_next >= in_max_block_end or List.len($seqs) >= CompressLazy.seq_store_length {
 					$in_block = 0
 				} else if $num_new_observations >= CompressLazy.observations_per_block_check
 					and $in_next - in_block_begin >= CompressLazy.min_block_length
@@ -907,14 +894,11 @@ CompressLazy := [].{
 			}
 
 			# Close the sequence list with the trailing literal run.
-			$seqs = match List.set($seqs, $seq_idx, {
+			$seqs = List.append($seqs, {
 				litrunlen_and_length: $litrunlen,
 				offset: 0.U16,
 				offset_slot: 0.U16,
-			}) {
-				Ok(next) => next
-				Err(_) => return Err(CompressBug)
-			}
+			})
 
 			$freqs_litlen = match List.set($freqs_litlen, DeflateTables.end_of_block,
 				(List.get($freqs_litlen, DeflateTables.end_of_block) ?? 0) + 1) {

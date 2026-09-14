@@ -41,10 +41,9 @@ CompressFast := [].{
 		var $tab = Matchfinder.init_table(HtMatchfinder.table_size)
 		var $base = 0.U64
 		var $nh = 0.U64
-		var $seqs = List.repeat(
-			{ litrunlen_and_length: 0.U32, offset: 0.U16, offset_slot: 0.U16 },
-			CompressFast.fast_seq_store_length + 1,
-		)
+		# One allocation for the whole stream: a block appends its sequences and
+		# the run terminator, and clearing the list afterwards keeps the capacity.
+		var $seqs = List.with_capacity(CompressFast.fast_seq_store_length + 1)
 
 		var $blocking = 1.U64
 		while $blocking == 1 {
@@ -56,7 +55,7 @@ CompressFast := [].{
 			)
 			var $freqs_litlen = List.repeat(0.U32, DeflateTables.num_litlen_syms)
 			var $freqs_offset = List.repeat(0.U32, DeflateTables.num_offset_syms)
-			var $seq_idx = 0.U64
+			$seqs = List.clear($seqs)
 			var $litrunlen = 0.U32
 
 			var $in_block = 1.U64
@@ -107,15 +106,11 @@ CompressFast := [].{
 							Ok(next) => next
 							Err(_) => return Err(CompressBug)
 						}
-						$seqs = match List.set($seqs, $seq_idx, {
+						$seqs = List.append($seqs, {
 							litrunlen_and_length: $litrunlen.bitwise_or(found.length.to_u32_wrap().shl_wrap(BlockOut.seq_length_shift)),
 							offset: found.offset.to_u16_wrap(),
 							offset_slot: offset_slot.to_u16_wrap(),
-						}) {
-							Ok(next) => next
-							Err(_) => return Err(CompressBug)
-						}
-						$seq_idx = $seq_idx + 1
+						})
 						$litrunlen = 0
 
 						skipped = HtMatchfinder.skip_bytes($tab, $base, $nh, input, $in_next + 1, in_end, found.length - 1)?
@@ -134,7 +129,7 @@ CompressFast := [].{
 						$in_next = $in_next + 1
 					}
 
-					if $in_next >= in_max_block_end or $seq_idx >= CompressFast.fast_seq_store_length {
+					if $in_next >= in_max_block_end or List.len($seqs) >= CompressFast.fast_seq_store_length {
 						$in_block = 0
 					} else {
 					}
@@ -142,14 +137,11 @@ CompressFast := [].{
 				}
 			}
 
-			$seqs = match List.set($seqs, $seq_idx, {
+			$seqs = List.append($seqs, {
 				litrunlen_and_length: $litrunlen,
 				offset: 0.U16,
 				offset_slot: 0.U16,
-			}) {
-				Ok(next) => next
-				Err(_) => return Err(CompressBug)
-			}
+			})
 			$freqs_litlen = match List.set($freqs_litlen, DeflateTables.end_of_block,
 				(List.get($freqs_litlen, DeflateTables.end_of_block) ?? 0) + 1) {
 				Ok(next) => next
