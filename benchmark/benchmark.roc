@@ -73,16 +73,16 @@ run_all! = |dir, remaining|
 run_one! : Path.Path, Str => Try({}, [Exit(I32), StdoutErr(IOErr), ..])
 run_one! = |dir, name| {
 	bytes = Path.read_bytes!(dir.join(name)) ? |_| Exit(1)
-	report!(name, "fastest", bytes, Fastest)?
-	report!(name, "balanced", bytes, Balanced)?
-	report!(name, "smallest", bytes, Smallest)
+	report!(name, "fastest", bytes, 1)?
+	report!(name, "balanced", bytes, 6)?
+	report!(name, "smallest", bytes, 12)
 }
 
 ## Time both directions at one level and print the two rows.
-report! : Str, Str, List(U8), [Fastest, Balanced, Smallest] => Try({}, [Exit(I32), StdoutErr(IOErr), ..])
+report! : Str, Str, List(U8), U64 => Try({}, [Exit(I32), StdoutErr(IOErr), ..])
 report! = |name, setting, bytes, level| {
 	orig = bytes.len()
-	compressed = Deflate.compress(bytes, level)
+	compressed = Deflate.compress(bytes, level) ? |_| Exit(1)
 	comp = compressed.len()
 
 	# Verify before reporting: a fast wrong answer is not a result.
@@ -106,13 +106,13 @@ row! = |name, op, setting, orig, comp, t|
 ## Written as recursion rather than a `while` over mutable state because the
 ## latter currently crashes the compiler in spec_constr on this shape; the
 ## measurement protocol is unaffected.
-time_compress! : List(U8), [Fastest, Balanced, Smallest] => Timing
+time_compress! : List(U8), U64 => Timing
 time_compress! = |bytes, level| {
-	warm = Deflate.compress(bytes, level)
-	compress_loop!(bytes, level, warm.len(), 0, 0, 0)
+	warm = compressed_len(Deflate.compress(bytes, level))
+	compress_loop!(bytes, level, warm, 0, 0, 0)
 }
 
-compress_loop! : List(U8), [Fastest, Balanced, Smallest], U64, U128, U128, U64 => Timing
+compress_loop! : List(U8), U64, U64, U128, U128, U64 => Timing
 compress_loop! = |bytes, level, sink, best, elapsed, iters|
 	if sink == 0 {
 		# Unreachable: keeps the accumulated sizes observable so the compressed
@@ -124,11 +124,20 @@ compress_loop! = |bytes, level, sink, best, elapsed, iters|
 		start = Utc.now!()
 		out = Deflate.compress(bytes, level)
 		# Read the length before stopping the clock so the work is forced.
-		produced = out.len()
+		produced = compressed_len(out)
 		finish = Utc.now!()
 		took = Utc.delta_as_nanos(finish, start)
 		next_best = if iters == 0 or took < best { took } else { best }
 		compress_loop!(bytes, level, sink + produced, next_best, elapsed + took, iters + 1)
+	}
+
+## Length of a compressed result, or 0 if it failed; report! has already
+## verified the round trip, so a failure here cannot pass as a result.
+compressed_len : Try(List(U8), _) -> U64
+compressed_len = |result|
+	match result {
+		Ok(bytes) => bytes.len()
+		Err(_) => 0
 	}
 
 ## Length of a decompressed result, or 0 if it failed.
