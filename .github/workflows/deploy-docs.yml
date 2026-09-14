@@ -6,10 +6,12 @@ on:
       - main
     paths:
       - '**.roc'
-  workflow_run:
-    workflows: ["Bundle"]
-    types:
-      - completed
+      - 'docs/index.html'
+      - '.github/workflows/deploy-docs.yml'
+  # The docs.tar.gz was attached while the release was a draft, so it is
+  # there to serve.
+  release:
+    types: [published]
 
   workflow_dispatch:
 
@@ -17,118 +19,25 @@ concurrency:
   group: "pages"
   cancel-in-progress: true
 
-permissions:
-  contents: read
-
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
+  # The github-pages environment only accepts deployments from the default
+  # branch, and a release event runs on the tag, so hand the work to a run on
+  # main.
+  dispatch:
+    name: Deploy from main instead
+    if: github.event_name == 'release'
+    runs-on: ubuntu-24.04
     permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-docs.yml --ref main --repo "$GITHUB_REPOSITORY"
+
+  deploy:
+    if: github.event_name != 'release'
+    permissions:
+      contents: read
       pages: write
       id-token: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v14
-
-      - name: Cache Nix store
-        uses: nix-community/cache-nix-action@v7
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          # Keep the saved store under GitHub's 10 GB/repo cache budget.
-          gc-max-store-size-linux: 5G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-
-      - name: Build Roc from the flake
-        run: nix build .#roc
-
-      - run: ./result/bin/roc version
-
-      # Fetch the release list once and derive a cache key from the set of
-      # release tag names. A release's docs are immutable once published, so
-      # while that set is unchanged the cache below hits and every download
-      # is skipped. A push to main will therefore only rebuild the `main` docs.
-      - name: List releases
-        id: releases
-        run: |
-          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/releases" \
-            | jq -c '.' > releases.json
-          jq -r '.[].tag_name' releases.json | sort > release-tags.txt
-          echo "key=$(sha256sum release-tags.txt | cut -c1-16)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache per-release docs
-        id: release-docs-cache
-        uses: actions/cache@v4
-        with:
-          path: ./release_docs
-          key: release-docs-v1-${{ steps.releases.outputs.key }}
-
-      - name: Download and extract docs for each release
-        if: steps.release-docs-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p ./release_docs
-          jq -c '.[]' releases.json | while read -r release; do
-            release_name=$(echo "$release" | jq -r '.tag_name')
-            assets_url=$(echo "$release" | jq -r '.assets_url')
-            assets=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "${assets_url}")
-            download_url=$(echo "$assets" | jq -r '.[] | select(.name=="docs.tar.gz") | .browser_download_url')
-            if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
-              echo "Processing release ${release_name}"
-              mkdir -p "./release_docs/${release_name}"
-              curl -sL "${download_url}" -o /tmp/docs.tar.gz
-              tar -xzf /tmp/docs.tar.gz -C "./release_docs/${release_name}" --strip-components=1
-              rm /tmp/docs.tar.gz
-            else
-              echo "docs.tar.gz not found for release ${release_name}, continuing..."
-            fi
-          done
-
-      - name: Assemble the docs site
-        run: |
-          mkdir -p ./temp_docs
-          cp -r ./release_docs/. ./temp_docs/ 2>/dev/null || true
-
-          # Landing page redirects to the newest release that has docs,
-          # falling back to the main-branch docs when none do.
-          latest_release=$(jq -r '.[0].tag_name // empty' releases.json)
-          if [ -n "${latest_release}" ] && [ -d "./temp_docs/${latest_release}" ]; then
-            redirect="${latest_release}"
-          else
-            redirect="main"
-          fi
-          if [ ! -f ./docs/index.html ]; then
-            echo "Error: ./docs/index.html not found"
-            exit 1
-          fi
-          sed "s/LATESTVERSION/${redirect}/g" ./docs/index.html > ./temp_docs/index.html
-          echo "Landing page redirects to ${redirect}"
-
-      - name: Add docs for the main branch
-        env:
-          ROC_DOCS_URL_ROOT: /${{ github.event.repository.name }}/main
-        run: |
-          ./result/bin/roc docs ./package/main.roc
-          mkdir -p ./temp_docs/main
-          mv ./generated-docs/* ./temp_docs/main
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: "./temp_docs"
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+    uses: niclas-ahden/roc-workflows/.github/workflows/deploy-docs.yml@v3
