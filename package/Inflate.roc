@@ -323,7 +323,8 @@ Inflate := [].{
 			if len > max_codeword_len_limit {
 				return Err(CorruptData)
 			} else {}
-			$len_counts = match List.set($len_counts, len, (List.get($len_counts, len) ?? 0) + 1) {
+			len_count = (List.get($len_counts, len) ?? 0) + 1
+			$len_counts = match List.set($len_counts, len, len_count) {
 				Ok(set_len_counts) => set_len_counts
 				Err(_) => return Err(CorruptData)
 			}
