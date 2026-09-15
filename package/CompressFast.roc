@@ -58,9 +58,13 @@ CompressFast := [].{
 			$seqs = List.clear($seqs)
 			var $litrunlen = 0.U32
 
+			# Wrapping arithmetic on the per-position path: the cursor never passes
+			# the input end, a match is at least three bytes, and every run length
+			# and symbol count stays below the block length, so a checked add or
+			# subtract here would only put an overflow branch on every position.
 			var $in_block = 1.U64
 			while $in_block == 1 {
-				remaining = in_end - $in_next
+				remaining = in_end.minus_wrap($in_next)
 				var $searched = 1.U64
 				if remaining < DeflateTables.max_match_len {
 					$max_len = remaining
@@ -69,14 +73,14 @@ CompressFast := [].{
 						var $left = $max_len
 						while $left > 0 {
 							lit = (List.get(input, $in_next) ?? 0).to_u64()
-							lit_count = (List.get($freqs_litlen, lit) ?? 0) + 1
+							lit_count = (List.get($freqs_litlen, lit) ?? 0).plus_wrap(1)
 							$freqs_litlen = match List.set($freqs_litlen, lit, lit_count) {
 								Ok(next) => next
 								Err(_) => return Err(CompressBug)
 							}
-							$litrunlen = $litrunlen + 1
-							$in_next = $in_next + 1
-							$left = $left - 1
+							$litrunlen = $litrunlen.plus_wrap(1)
+							$in_next = $in_next.plus_wrap(1)
+							$left = $left.minus_wrap(1)
 						}
 						$searched = 0
 						$in_block = 0
@@ -95,13 +99,13 @@ CompressFast := [].{
 					if found.length != 0 {
 						length_slot = DeflateTables.length_slot(found.length)
 						offset_slot = DeflateTables.offset_slot(found.offset)
-						litlen_sym = DeflateTables.first_len_sym + length_slot
-						litlen_sym_count = (List.get($freqs_litlen, litlen_sym) ?? 0) + 1
+						litlen_sym = DeflateTables.first_len_sym.plus_wrap(length_slot)
+						litlen_sym_count = (List.get($freqs_litlen, litlen_sym) ?? 0).plus_wrap(1)
 						$freqs_litlen = match List.set($freqs_litlen, litlen_sym, litlen_sym_count) {
 							Ok(next) => next
 							Err(_) => return Err(CompressBug)
 						}
-						offset_slot_count = (List.get($freqs_offset, offset_slot) ?? 0) + 1
+						offset_slot_count = (List.get($freqs_offset, offset_slot) ?? 0).plus_wrap(1)
 						$freqs_offset = match List.set($freqs_offset, offset_slot, offset_slot_count) {
 							Ok(next) => next
 							Err(_) => return Err(CompressBug)
@@ -113,20 +117,20 @@ CompressFast := [].{
 						})
 						$litrunlen = 0
 
-						skipped = HtMatchfinder.skip_bytes($tab, $base, $nh, input, $in_next + 1, in_end, found.length - 1)?
+						skipped = HtMatchfinder.skip_bytes($tab, $base, $nh, input, $in_next.plus_wrap(1), in_end, found.length.minus_wrap(1))?
 						$tab = skipped.hash_tab
 						$base = skipped.in_cur_base
 						$nh = skipped.next_hash
-						$in_next = $in_next + found.length
+						$in_next = $in_next.plus_wrap(found.length)
 					} else {
 						lit = (List.get(input, $in_next) ?? 0).to_u64()
-						lit_count = (List.get($freqs_litlen, lit) ?? 0) + 1
+						lit_count = (List.get($freqs_litlen, lit) ?? 0).plus_wrap(1)
 						$freqs_litlen = match List.set($freqs_litlen, lit, lit_count) {
 							Ok(next) => next
 							Err(_) => return Err(CompressBug)
 						}
-						$litrunlen = $litrunlen + 1
-						$in_next = $in_next + 1
+						$litrunlen = $litrunlen.plus_wrap(1)
+						$in_next = $in_next.plus_wrap(1)
 					}
 
 					if $in_next >= in_max_block_end or List.len($seqs) >= CompressFast.fast_seq_store_length {
