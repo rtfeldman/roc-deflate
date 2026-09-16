@@ -304,9 +304,14 @@ CompressLazy := [].{
 				params.max_search_depth,
 			)?
 
+			# Wrapping arithmetic on the per-position path: the cursor never passes
+			# the input end, a match is at least three bytes and at most 258, the
+			# window base never passes the cursor, and every run length and symbol
+			# count stays below the block length, so a checked add or subtract here
+			# would only put an overflow branch on every position.
 			var $in_block = 1.U64
 			while $in_block == 1 {
-				remaining = in_end - $in_next
+				remaining = in_end.minus_wrap($in_next)
 				if remaining < DeflateTables.max_match_len {
 					$max_len = remaining
 					$nice_len = $nice_len.min($max_len)
@@ -317,24 +322,24 @@ CompressLazy := [].{
 				# the base, then insert this position before searching: the chain
 				# heads read here are the ones from before the insert, so the walk
 				# starts at the previous occurrence rather than at this position.
-				if $in_next - $base == Matchfinder.window_size {
+				if $in_next.minus_wrap($base) == Matchfinder.window_size {
 					$mf = Matchfinder.rebase_nodes($mf)?
-					$base = $base + Matchfinder.window_size
+					$base = $base.plus_wrap(Matchfinder.window_size)
 				} else {
 				}
-				var $found = { length: min_len - 1, offset: 0.U64 }
+				var $found = { length: min_len.minus_wrap(1), offset: 0.U64 }
 				if $max_len < 5 {
 					# Not enough bytes left to read the next position's hash sequence.
 				} else {
-					cur_pos = $in_next - $base
-					cur_node3 = List.get($mf, HcMatchfinder.hash3_base + $nh3) ?? 0
-					cur_node4 = List.get($mf, HcMatchfinder.hash4_base + $nh4) ?? 0
-					pos = (cur_pos + Matchfinder.node_bias).to_u16_wrap()
-					$mf = match List.set($mf, HcMatchfinder.hash3_base + $nh3, pos) {
+					cur_pos = $in_next.minus_wrap($base)
+					cur_node3 = List.get($mf, HcMatchfinder.hash3_base.plus_wrap($nh3)) ?? 0
+					cur_node4 = List.get($mf, HcMatchfinder.hash4_base.plus_wrap($nh4)) ?? 0
+					pos = (cur_pos.plus_wrap(Matchfinder.node_bias)).to_u16_wrap()
+					$mf = match List.set($mf, HcMatchfinder.hash3_base.plus_wrap($nh3), pos) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
-					$mf = match List.set($mf, HcMatchfinder.hash4_base + $nh4, pos) {
+					$mf = match List.set($mf, HcMatchfinder.hash4_base.plus_wrap($nh4), pos) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
@@ -342,7 +347,7 @@ CompressLazy := [].{
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
-					next_hashseq = U32.from_le_bytes(input, $in_next + 1) ?? 0
+					next_hashseq = U32.from_le_bytes(input, $in_next.plus_wrap(1)) ?? 0
 					$nh3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
 					$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
 					$found = HcMatchfinder.longest_match(
@@ -352,7 +357,7 @@ CompressLazy := [].{
 						$base,
 						input,
 						$in_next,
-						min_len - 1,
+						min_len.minus_wrap(1),
 						$max_len,
 						$nice_len,
 						params.max_search_depth,
@@ -363,24 +368,24 @@ CompressLazy := [].{
 					and ($found.length > DeflateTables.min_match_len or $found.offset <= 4096) {
 					length_slot = DeflateTables.length_slot($found.length)
 					offset_slot = DeflateTables.offset_slot($found.offset)
-					litlen_sym = DeflateTables.first_len_sym + length_slot
-					litlen_sym_count = (List.get($freqs_litlen, litlen_sym) ?? 0) + 1
+					litlen_sym = DeflateTables.first_len_sym.plus_wrap(length_slot)
+					litlen_sym_count = (List.get($freqs_litlen, litlen_sym) ?? 0).plus_wrap(1)
 					$freqs_litlen = match List.set($freqs_litlen, litlen_sym, litlen_sym_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
-					offset_slot_count = (List.get($freqs_offset, offset_slot) ?? 0) + 1
+					offset_slot_count = (List.get($freqs_offset, offset_slot) ?? 0).plus_wrap(1)
 					$freqs_offset = match List.set($freqs_offset, offset_slot, offset_slot_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
-					obs = 8 + if $found.length >= 9 { 1 } else { 0 }
-					obs_count = (List.get($new_observations, obs) ?? 0) + 1
+					obs = if $found.length >= 9 { 9 } else { 8 }
+					obs_count = (List.get($new_observations, obs) ?? 0).plus_wrap(1)
 					$new_observations = match List.set($new_observations, obs, obs_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
-					$num_new_observations = $num_new_observations + 1
+					$num_new_observations = $num_new_observations.plus_wrap(1)
 					$seqs = List.append($seqs, {
 						litrunlen_and_length: $litrunlen.bitwise_or($found.length.to_u32_wrap().shl_wrap(BlockOut.seq_length_shift)),
 						offset: $found.offset.to_u16_wrap(),
@@ -388,36 +393,36 @@ CompressLazy := [].{
 					})
 					$litrunlen = 0
 
-					skipped = HcMatchfinder.skip_bytes($mf, $base, $nh3, $nh4, input, $in_next + 1, in_end, $found.length - 1)?
+					skipped = HcMatchfinder.skip_bytes($mf, $base, $nh3, $nh4, input, $in_next.plus_wrap(1), in_end, $found.length.minus_wrap(1))?
 					$mf = skipped.tab
 					$base = skipped.in_cur_base
 					$nh3 = skipped.next_hash3
 					$nh4 = skipped.next_hash4
-					$in_next = $in_next + $found.length
+					$in_next = $in_next.plus_wrap($found.length)
 				} else {
 					lit = (List.get(input, $in_next) ?? 0).to_u64()
-					lit_count = (List.get($freqs_litlen, lit) ?? 0) + 1
+					lit_count = (List.get($freqs_litlen, lit) ?? 0).plus_wrap(1)
 					$freqs_litlen = match List.set($freqs_litlen, lit, lit_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
 					obs = lit.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit.bitwise_and(1))
-					obs_count = (List.get($new_observations, obs) ?? 0) + 1
+					obs_count = (List.get($new_observations, obs) ?? 0).plus_wrap(1)
 					$new_observations = match List.set($new_observations, obs, obs_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
-					$num_new_observations = $num_new_observations + 1
-					$litrunlen = $litrunlen + 1
-					$in_next = $in_next + 1
+					$num_new_observations = $num_new_observations.plus_wrap(1)
+					$litrunlen = $litrunlen.plus_wrap(1)
+					$in_next = $in_next.plus_wrap(1)
 				}
 
 				if $in_next >= in_max_block_end or List.len($seqs) >= CompressLazy.seq_store_length {
 					$in_block = 0
 				} else if $num_new_observations >= CompressLazy.observations_per_block_check
-					and $in_next - in_block_begin >= CompressLazy.min_block_length
-					and in_end - $in_next >= CompressLazy.min_block_length {
-					if CompressLazy.do_end_block_check($new_observations, $observations, $num_new_observations, $num_observations, $in_next - in_block_begin) == 1 {
+					and $in_next.minus_wrap(in_block_begin) >= CompressLazy.min_block_length
+					and in_end.minus_wrap($in_next) >= CompressLazy.min_block_length {
+					if CompressLazy.do_end_block_check($new_observations, $observations, $num_new_observations, $num_observations, $in_next.minus_wrap(in_block_begin)) == 1 {
 						$in_block = 0
 					} else {
 						ms = CompressLazy.merge_observations($new_observations, $observations, $num_new_observations, $num_observations)?
@@ -555,18 +560,22 @@ CompressLazy := [].{
 				params.max_search_depth,
 			)?
 
+			# Wrapping arithmetic on the per-position path: the cursor never passes
+			# the input end, a match is at least three bytes and at most 258, the
+			# window base never passes the cursor, and every run length and symbol
+			# count stays below the block length, so a checked add or subtract here
+			# would only put an overflow branch on every position.
 			var $in_block = 1.U64
 			while $in_block == 1 {
 				# Revise the minimum match length once enough of the block has
 				# been seen for its own literal distribution to mean something.
 				if $in_next >= $next_recalc_min_len {
 					$min_len = CompressLazy.recalculate_min_match_len($freqs_litlen, params.max_search_depth)
-					$next_recalc_min_len = $next_recalc_min_len
-						+ (in_end - $next_recalc_min_len).min($in_next - in_block_begin)
+					$next_recalc_min_len = $next_recalc_min_len.plus_wrap(in_end.minus_wrap($next_recalc_min_len).min($in_next.minus_wrap(in_block_begin)))
 				} else {
 				}
 
-				remaining0 = in_end - $in_next
+				remaining0 = in_end.minus_wrap($in_next)
 				if remaining0 < DeflateTables.max_match_len {
 					$max_len = remaining0
 					$nice_len = $nice_len.min($max_len)
@@ -577,24 +586,24 @@ CompressLazy := [].{
 				# the base, then insert this position before searching: the chain
 				# heads read here are the ones from before the insert, so the walk
 				# starts at the previous occurrence rather than at this position.
-				if $in_next - $base == Matchfinder.window_size {
+				if $in_next.minus_wrap($base) == Matchfinder.window_size {
 					$mf = Matchfinder.rebase_nodes($mf)?
-					$base = $base + Matchfinder.window_size
+					$base = $base.plus_wrap(Matchfinder.window_size)
 				} else {
 				}
-				var $found = { length: $min_len - 1, offset: 0.U64 }
+				var $found = { length: $min_len.minus_wrap(1), offset: 0.U64 }
 				if $max_len < 5 {
 					# Not enough bytes left to read the next position's hash sequence.
 				} else {
-					cur_pos = $in_next - $base
-					cur_node3 = List.get($mf, HcMatchfinder.hash3_base + $nh3) ?? 0
-					cur_node4 = List.get($mf, HcMatchfinder.hash4_base + $nh4) ?? 0
-					pos = (cur_pos + Matchfinder.node_bias).to_u16_wrap()
-					$mf = match List.set($mf, HcMatchfinder.hash3_base + $nh3, pos) {
+					cur_pos = $in_next.minus_wrap($base)
+					cur_node3 = List.get($mf, HcMatchfinder.hash3_base.plus_wrap($nh3)) ?? 0
+					cur_node4 = List.get($mf, HcMatchfinder.hash4_base.plus_wrap($nh4)) ?? 0
+					pos = (cur_pos.plus_wrap(Matchfinder.node_bias)).to_u16_wrap()
+					$mf = match List.set($mf, HcMatchfinder.hash3_base.plus_wrap($nh3), pos) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
-					$mf = match List.set($mf, HcMatchfinder.hash4_base + $nh4, pos) {
+					$mf = match List.set($mf, HcMatchfinder.hash4_base.plus_wrap($nh4), pos) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
@@ -602,7 +611,7 @@ CompressLazy := [].{
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
-					next_hashseq = U32.from_le_bytes(input, $in_next + 1) ?? 0
+					next_hashseq = U32.from_le_bytes(input, $in_next.plus_wrap(1)) ?? 0
 					$nh3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
 					$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
 					$found = HcMatchfinder.longest_match(
@@ -612,7 +621,7 @@ CompressLazy := [].{
 						$base,
 						input,
 						$in_next,
-						$min_len - 1,
+						$min_len.minus_wrap(1),
 						$max_len,
 						$nice_len,
 						params.max_search_depth,
@@ -623,22 +632,22 @@ CompressLazy := [].{
 					or ($found.length == DeflateTables.min_match_len and $found.offset > 8192) {
 					# No match worth taking; emit a literal.
 					lit = (List.get(input, $in_next) ?? 0).to_u64()
-					lit_count = (List.get($freqs_litlen, lit) ?? 0) + 1
+					lit_count = (List.get($freqs_litlen, lit) ?? 0).plus_wrap(1)
 					$freqs_litlen = match List.set($freqs_litlen, lit, lit_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
 					obs = lit.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit.bitwise_and(1))
-					obs_count = (List.get($new_observations, obs) ?? 0) + 1
+					obs_count = (List.get($new_observations, obs) ?? 0).plus_wrap(1)
 					$new_observations = match List.set($new_observations, obs, obs_count) {
 						Ok(next) => next
 						Err(_) => return Err(CompressBug)
 					}
-					$num_new_observations = $num_new_observations + 1
-					$litrunlen = $litrunlen + 1
-					$in_next = $in_next + 1
+					$num_new_observations = $num_new_observations.plus_wrap(1)
+					$litrunlen = $litrunlen.plus_wrap(1)
+					$in_next = $in_next.plus_wrap(1)
 				} else {
-					$in_next = $in_next + 1
+					$in_next = $in_next.plus_wrap(1)
 					var $cur_len = $found.length
 					var $cur_offset = $found.offset
 
@@ -651,9 +660,9 @@ CompressLazy := [].{
 						if $cur_len >= $nice_len {
 							# Long enough that looking further cannot pay.
 							$emit = 1
-							$skip_after = $cur_len - 1
+							$skip_after = $cur_len.minus_wrap(1)
 						} else {
-							remaining1 = in_end - $in_next
+							remaining1 = in_end.minus_wrap($in_next)
 							if remaining1 < DeflateTables.max_match_len {
 								$max_len = remaining1
 								$nice_len = $nice_len.min($max_len)
@@ -665,24 +674,24 @@ CompressLazy := [].{
 							# the base, then insert this position before searching: the chain
 							# heads read here are the ones from before the insert, so the walk
 							# starts at the previous occurrence rather than at this position.
-							if $in_next - $base == Matchfinder.window_size {
+							if $in_next.minus_wrap($base) == Matchfinder.window_size {
 								$mf = Matchfinder.rebase_nodes($mf)?
-								$base = $base + Matchfinder.window_size
+								$base = $base.plus_wrap(Matchfinder.window_size)
 							} else {
 							}
-							var $nxt = { length: $cur_len - 1, offset: 0.U64 }
+							var $nxt = { length: $cur_len.minus_wrap(1), offset: 0.U64 }
 							if $max_len < 5 {
 								# Not enough bytes left to read the next position's hash sequence.
 							} else {
-								cur_pos = $in_next - $base
-								cur_node3 = List.get($mf, HcMatchfinder.hash3_base + $nh3) ?? 0
-								cur_node4 = List.get($mf, HcMatchfinder.hash4_base + $nh4) ?? 0
-								pos = (cur_pos + Matchfinder.node_bias).to_u16_wrap()
-								$mf = match List.set($mf, HcMatchfinder.hash3_base + $nh3, pos) {
+								cur_pos = $in_next.minus_wrap($base)
+								cur_node3 = List.get($mf, HcMatchfinder.hash3_base.plus_wrap($nh3)) ?? 0
+								cur_node4 = List.get($mf, HcMatchfinder.hash4_base.plus_wrap($nh4)) ?? 0
+								pos = (cur_pos.plus_wrap(Matchfinder.node_bias)).to_u16_wrap()
+								$mf = match List.set($mf, HcMatchfinder.hash3_base.plus_wrap($nh3), pos) {
 									Ok(next) => next
 									Err(_) => return Err(CompressBug)
 								}
-								$mf = match List.set($mf, HcMatchfinder.hash4_base + $nh4, pos) {
+								$mf = match List.set($mf, HcMatchfinder.hash4_base.plus_wrap($nh4), pos) {
 									Ok(next) => next
 									Err(_) => return Err(CompressBug)
 								}
@@ -690,7 +699,7 @@ CompressLazy := [].{
 									Ok(next) => next
 									Err(_) => return Err(CompressBug)
 								}
-								next_hashseq = U32.from_le_bytes(input, $in_next + 1) ?? 0
+								next_hashseq = U32.from_le_bytes(input, $in_next.plus_wrap(1)) ?? 0
 								$nh3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
 								$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
 								$nxt = HcMatchfinder.longest_match(
@@ -700,39 +709,39 @@ CompressLazy := [].{
 									$base,
 									input,
 									$in_next,
-									$cur_len - 1,
+									$cur_len.minus_wrap(1),
 									$max_len,
 									$nice_len,
 									params.max_search_depth.shr_zf_wrap(1),
 								)?
 							}
-							$in_next = $in_next + 1
+							$in_next = $in_next.plus_wrap(1)
 
 							better = $nxt.length >= $cur_len
-								and 4 * ($nxt.length.to_i64_wrap() - $cur_len.to_i64_wrap())
-									+ (CompressLazy.bsr32($cur_offset) - CompressLazy.bsr32($nxt.offset)) > 2
+								and $nxt.length.to_i64_wrap().minus_wrap($cur_len.to_i64_wrap()).times_wrap(4)
+									.plus_wrap(CompressLazy.bsr32($cur_offset).minus_wrap(CompressLazy.bsr32($nxt.offset))) > 2
 
 							if better {
 								# The next position starts a better match, so
 								# this position becomes a literal.
-								lit = (List.get(input, $in_next - 2) ?? 0).to_u64()
-								lit_count = (List.get($freqs_litlen, lit) ?? 0) + 1
+								lit = (List.get(input, $in_next.minus_wrap(2)) ?? 0).to_u64()
+								lit_count = (List.get($freqs_litlen, lit) ?? 0).plus_wrap(1)
 								$freqs_litlen = match List.set($freqs_litlen, lit, lit_count) {
 									Ok(next) => next
 									Err(_) => return Err(CompressBug)
 								}
 								obs = lit.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit.bitwise_and(1))
-								obs_count = (List.get($new_observations, obs) ?? 0) + 1
+								obs_count = (List.get($new_observations, obs) ?? 0).plus_wrap(1)
 								$new_observations = match List.set($new_observations, obs, obs_count) {
 									Ok(next) => next
 									Err(_) => return Err(CompressBug)
 								}
-								$num_new_observations = $num_new_observations + 1
-								$litrunlen = $litrunlen + 1
+								$num_new_observations = $num_new_observations.plus_wrap(1)
+								$litrunlen = $litrunlen.plus_wrap(1)
 								$cur_len = $nxt.length
 								$cur_offset = $nxt.offset
 							} else if params.lazy >= 2 {
-								remaining2 = in_end - $in_next
+								remaining2 = in_end.minus_wrap($in_next)
 								if remaining2 < DeflateTables.max_match_len {
 									$max_len = remaining2
 									$nice_len = $nice_len.min($max_len)
@@ -742,24 +751,24 @@ CompressLazy := [].{
 								# the base, then insert this position before searching: the chain
 								# heads read here are the ones from before the insert, so the walk
 								# starts at the previous occurrence rather than at this position.
-								if $in_next - $base == Matchfinder.window_size {
+								if $in_next.minus_wrap($base) == Matchfinder.window_size {
 									$mf = Matchfinder.rebase_nodes($mf)?
-									$base = $base + Matchfinder.window_size
+									$base = $base.plus_wrap(Matchfinder.window_size)
 								} else {
 								}
-								var $nxt2 = { length: $cur_len - 1, offset: 0.U64 }
+								var $nxt2 = { length: $cur_len.minus_wrap(1), offset: 0.U64 }
 								if $max_len < 5 {
 									# Not enough bytes left to read the next position's hash sequence.
 								} else {
-									cur_pos = $in_next - $base
-									cur_node3 = List.get($mf, HcMatchfinder.hash3_base + $nh3) ?? 0
-									cur_node4 = List.get($mf, HcMatchfinder.hash4_base + $nh4) ?? 0
-									pos = (cur_pos + Matchfinder.node_bias).to_u16_wrap()
-									$mf = match List.set($mf, HcMatchfinder.hash3_base + $nh3, pos) {
+									cur_pos = $in_next.minus_wrap($base)
+									cur_node3 = List.get($mf, HcMatchfinder.hash3_base.plus_wrap($nh3)) ?? 0
+									cur_node4 = List.get($mf, HcMatchfinder.hash4_base.plus_wrap($nh4)) ?? 0
+									pos = (cur_pos.plus_wrap(Matchfinder.node_bias)).to_u16_wrap()
+									$mf = match List.set($mf, HcMatchfinder.hash3_base.plus_wrap($nh3), pos) {
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)
 									}
-									$mf = match List.set($mf, HcMatchfinder.hash4_base + $nh4, pos) {
+									$mf = match List.set($mf, HcMatchfinder.hash4_base.plus_wrap($nh4), pos) {
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)
 									}
@@ -767,7 +776,7 @@ CompressLazy := [].{
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)
 									}
-									next_hashseq = U32.from_le_bytes(input, $in_next + 1) ?? 0
+									next_hashseq = U32.from_le_bytes(input, $in_next.plus_wrap(1)) ?? 0
 									$nh3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
 									$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
 									$nxt2 = HcMatchfinder.longest_match(
@@ -777,81 +786,81 @@ CompressLazy := [].{
 										$base,
 										input,
 										$in_next,
-										$cur_len - 1,
+										$cur_len.minus_wrap(1),
 										$max_len,
 										$nice_len,
 										params.max_search_depth.shr_zf_wrap(2),
 									)?
 								}
-								$in_next = $in_next + 1
+								$in_next = $in_next.plus_wrap(1)
 
 								better2 = $nxt2.length >= $cur_len
-									and 4 * ($nxt2.length.to_i64_wrap() - $cur_len.to_i64_wrap())
-										+ (CompressLazy.bsr32($cur_offset) - CompressLazy.bsr32($nxt2.offset)) > 6
+									and $nxt2.length.to_i64_wrap().minus_wrap($cur_len.to_i64_wrap()).times_wrap(4)
+										.plus_wrap(CompressLazy.bsr32($cur_offset).minus_wrap(CompressLazy.bsr32($nxt2.offset))) > 6
 
 								if better2 {
 									# Two positions ahead is better still, so
 									# both of these become literals.
-									lit_a = (List.get(input, $in_next - 3) ?? 0).to_u64()
-									lit_a_count = (List.get($freqs_litlen, lit_a) ?? 0) + 1
+									lit_a = (List.get(input, $in_next.minus_wrap(3)) ?? 0).to_u64()
+									lit_a_count = (List.get($freqs_litlen, lit_a) ?? 0).plus_wrap(1)
 									$freqs_litlen = match List.set($freqs_litlen, lit_a, lit_a_count) {
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)
 									}
 									obs_a = lit_a.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit_a.bitwise_and(1))
-									obs_a_count = (List.get($new_observations, obs_a) ?? 0) + 1
+									obs_a_count = (List.get($new_observations, obs_a) ?? 0).plus_wrap(1)
 									$new_observations = match List.set($new_observations, obs_a, obs_a_count) {
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)
 									}
-									$num_new_observations = $num_new_observations + 1
-									lit_b = (List.get(input, $in_next - 2) ?? 0).to_u64()
-									lit_b_count = (List.get($freqs_litlen, lit_b) ?? 0) + 1
+									$num_new_observations = $num_new_observations.plus_wrap(1)
+									lit_b = (List.get(input, $in_next.minus_wrap(2)) ?? 0).to_u64()
+									lit_b_count = (List.get($freqs_litlen, lit_b) ?? 0).plus_wrap(1)
 									$freqs_litlen = match List.set($freqs_litlen, lit_b, lit_b_count) {
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)
 									}
 									obs_b = lit_b.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit_b.bitwise_and(1))
-									obs_b_count = (List.get($new_observations, obs_b) ?? 0) + 1
+									obs_b_count = (List.get($new_observations, obs_b) ?? 0).plus_wrap(1)
 									$new_observations = match List.set($new_observations, obs_b, obs_b_count) {
 										Ok(next) => next
 										Err(_) => return Err(CompressBug)
 									}
-									$num_new_observations = $num_new_observations + 2 - 1
-									$litrunlen = $litrunlen + 2
+									$num_new_observations = $num_new_observations.plus_wrap(1)
+									$litrunlen = $litrunlen.plus_wrap(2)
 									$cur_len = $nxt2.length
 									$cur_offset = $nxt2.offset
 								} else {
 									$emit = 1
-									$skip_after = if $cur_len > 3 { $cur_len - 3 } else { 0 }
+									$skip_after = if $cur_len > 3 { $cur_len.minus_wrap(3) } else { 0 }
 								}
 							} else {
 								$emit = 1
-								$skip_after = $cur_len - 2
+								$skip_after = $cur_len.minus_wrap(2)
 							}
 						}
 
 						if $emit == 1 {
 							length_slot = DeflateTables.length_slot($cur_len)
 							offset_slot = DeflateTables.offset_slot($cur_offset)
-							litlen_sym = DeflateTables.first_len_sym + length_slot
-							litlen_sym_count = (List.get($freqs_litlen, litlen_sym) ?? 0) + 1
+							litlen_sym = DeflateTables.first_len_sym.plus_wrap(length_slot)
+							litlen_sym_count = (List.get($freqs_litlen, litlen_sym) ?? 0).plus_wrap(1)
 							$freqs_litlen = match List.set($freqs_litlen, litlen_sym, litlen_sym_count) {
 								Ok(next) => next
 								Err(_) => return Err(CompressBug)
 							}
-							offset_slot_count = (List.get($freqs_offset, offset_slot) ?? 0) + 1
+							offset_slot_count = (List.get($freqs_offset, offset_slot) ?? 0).plus_wrap(1)
 							$freqs_offset = match List.set($freqs_offset, offset_slot, offset_slot_count) {
 								Ok(next) => next
 								Err(_) => return Err(CompressBug)
 							}
-							obs = 8 + if $cur_len >= 9 { 1 } else { 0 }
-							obs_count = (List.get($new_observations, obs) ?? 0) + 1
+							obs = if $cur_len >= 9 { 9 } else { 8 }
+							obs_count = (List.get($new_observations, obs) ?? 0).plus_wrap(1)
 							$new_observations = match List.set($new_observations, obs, obs_count) {
 								Ok(next) => next
 								Err(_) => return Err(CompressBug)
 							}
-							$num_new_observations = $num_new_observations + 1
+							$num_new_observations = $num_new_observations.plus_wrap(1)
 							$seqs = List.append($seqs, {
 								litrunlen_and_length: $litrunlen.bitwise_or($cur_len.to_u32_wrap().shl_wrap(BlockOut.seq_length_shift)),
 								offset: $cur_offset.to_u16_wrap(),
@@ -865,7 +874,7 @@ CompressLazy := [].{
 								$base = skipped.in_cur_base
 								$nh3 = skipped.next_hash3
 								$nh4 = skipped.next_hash4
-								$in_next = $in_next + $skip_after
+								$in_next = $in_next.plus_wrap($skip_after)
 							} else {
 							}
 							$matching = 0
@@ -878,9 +887,9 @@ CompressLazy := [].{
 				if $in_next >= in_max_block_end or List.len($seqs) >= CompressLazy.seq_store_length {
 					$in_block = 0
 				} else if $num_new_observations >= CompressLazy.observations_per_block_check
-					and $in_next - in_block_begin >= CompressLazy.min_block_length
-					and in_end - $in_next >= CompressLazy.min_block_length {
-					if CompressLazy.do_end_block_check($new_observations, $observations, $num_new_observations, $num_observations, $in_next - in_block_begin) == 1 {
+					and $in_next.minus_wrap(in_block_begin) >= CompressLazy.min_block_length
+					and in_end.minus_wrap($in_next) >= CompressLazy.min_block_length {
+					if CompressLazy.do_end_block_check($new_observations, $observations, $num_new_observations, $num_observations, $in_next.minus_wrap(in_block_begin)) == 1 {
 						$in_block = 0
 					} else {
 						ms = CompressLazy.merge_observations($new_observations, $observations, $num_new_observations, $num_observations)?
