@@ -85,7 +85,7 @@ HcMatchfinder := [].{
 		# is a cycle more on every step of the chain.
 		# A node at or below the current position, in the biased space the
 		# tables use, is out of the window.
-		cur_pos = in_next - in_base
+		cur_pos = in_next.minus_wrap(in_base)
 
 		var $best_len = best_len_in
 		var $best_match_at = in_next
@@ -205,13 +205,13 @@ HcMatchfinder := [].{
 			}
 		}
 
-		Ok({ length: $best_len, offset: in_next - $best_match_at })
+		Ok({ length: $best_len, offset: in_next.minus_wrap($best_match_at) })
 	}
 
 	## Insert `count` positions into the tables without searching them.
 	skip_bytes : List(U16), U64, U64, U64, List(U8), U64, U64, U64 -> Try(State, [CompressBug])
 	skip_bytes = |tab_0, base_0, nh3_0, nh4_0, input, in_next0, in_end, count| {
-		if count + 5 > in_end - in_next0 {
+		if count.plus_wrap(5) > in_end.minus_wrap(in_next0) {
 			Ok({
 				tab: tab_0,
 				in_cur_base: base_0,
@@ -221,14 +221,14 @@ HcMatchfinder := [].{
 		} else {
 			var $tab = tab_0
 			var $base = base_0
-			var $cur_pos = (in_next0 - base_0).to_i64_wrap()
+			var $cur_pos = in_next0.minus_wrap(base_0).to_i64_wrap()
 			# One slide covers the whole run, since a match is far shorter than
 			# a window; positions past the slide go in already relative to the
 			# new base.
-			if $cur_pos + count.to_i64_wrap() - 1 >= Matchfinder.window_size.to_i64_wrap() {
+			if $cur_pos.plus_wrap(count.to_i64_wrap()).minus_wrap(1) >= Matchfinder.window_size.to_i64_wrap() {
 				$tab = Matchfinder.rebase_nodes($tab)?
-				$base = $base + Matchfinder.window_size
-				$cur_pos = $cur_pos - Matchfinder.window_size.to_i64_wrap()
+				$base = $base.plus_wrap(Matchfinder.window_size)
+				$cur_pos = $cur_pos.minus_wrap(Matchfinder.window_size.to_i64_wrap())
 			} else {
 			}
 			# The table holds all three regions, and the incoming hashes are
@@ -241,6 +241,9 @@ HcMatchfinder := [].{
 				return Err(CompressBug)
 			} else {
 			}
+			# Wrapping arithmetic: the run was bounded against the input above and
+			# the table indices are a region base plus a reduced hash, so nothing
+			# here can overflow and a checked add would only cost a branch per byte.
 			var $in_next = in_next0
 			var $hash3 = nh3_0
 			var $hash4 = nh4_0
@@ -248,8 +251,8 @@ HcMatchfinder := [].{
 			while $remaining > 0 {
 				pos = $cur_pos.plus_wrap(Matchfinder.node_bias.to_i64_wrap()).to_u16_wrap()
 				slot = $cur_pos.to_u64_wrap().bitwise_and(32767)
-				prev_head = List.get($tab, HcMatchfinder.hash4_base + $hash4) ?? 0
-				tab1 = match List.set($tab, HcMatchfinder.hash3_base + $hash3, pos) {
+				prev_head = List.get($tab, HcMatchfinder.hash4_base.plus_wrap($hash4)) ?? 0
+				tab1 = match List.set($tab, HcMatchfinder.hash3_base.plus_wrap($hash3), pos) {
 					Ok(next) => next
 					Err(_) => return Err(CompressBug)
 				}
@@ -257,7 +260,7 @@ HcMatchfinder := [].{
 					Ok(next) => next
 					Err(_) => return Err(CompressBug)
 				}
-				$tab = match List.set(tab2, HcMatchfinder.hash4_base + $hash4, pos) {
+				$tab = match List.set(tab2, HcMatchfinder.hash4_base.plus_wrap($hash4), pos) {
 					Ok(next) => next
 					Err(_) => return Err(CompressBug)
 				}
