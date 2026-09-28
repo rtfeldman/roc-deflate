@@ -32,7 +32,8 @@ roc="${ROC:-roc}"
 cc="${CC:-cc}"
 libdeflate_src="${LIBDEFLATE_SRC:-$here/../../libdeflate}"
 
-files=(dickens mozilla mr nci ooffice osdb reymont samba sao webster x-ray xml)
+# CORPUS_FILES narrows the corpus for iteration; unset runs the whole thing.
+read -r -a files <<< "${CORPUS_FILES:-dickens mozilla mr nci ooffice osdb reymont samba sao webster x-ray xml}"
 
 if [ ! -d "$libdeflate_src" ]; then
 	echo "missing libdeflate checkout: $libdeflate_src" >&2

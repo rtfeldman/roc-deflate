@@ -126,7 +126,8 @@ HuffmanEncode := [].{
 		var $sym = 0.U64
 		while $sym < num_syms {
 			slot = (List.get(freqs, $sym) ?? 0).to_u64().min(top)
-			$counters = match List.set($counters, slot, (List.get($counters, slot) ?? 0) + 1) {
+			slot_count = (List.get($counters, slot) ?? 0) + 1
+			$counters = match List.set($counters, slot, slot_count) {
 				Ok(next) => next
 				Err(_) => return Err(CompressBug)
 			}
@@ -307,7 +308,8 @@ HuffmanEncode := [].{
 				Ok(next) => next
 				Err(_) => return Err(CompressBug)
 			}
-			$len_counts = match List.set($len_counts, $depth + 1, (List.get($len_counts, $depth + 1) ?? 0) + 2) {
+			len_counts_count = (List.get($len_counts, $depth + 1) ?? 0) + 2
+			$len_counts = match List.set($len_counts, $depth + 1, len_counts_count) {
 				Ok(next) => next
 				Err(_) => return Err(CompressBug)
 			}

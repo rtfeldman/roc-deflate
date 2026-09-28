@@ -24,6 +24,10 @@ HtMatchfinder := [].{
 	required_nbytes : U64
 	required_nbytes = 5
 
+	## Two entries per bucket, one bucket per hash value.
+	table_size : U64
+	table_size = 65536
+
 	## The two entries of each bucket sit next to each other, so a bucket is
 	## one cache line's worth of adjacent slots rather than two strided reads.
 	##
@@ -50,21 +54,21 @@ HtMatchfinder := [].{
 		}
 		var $tab = tab_0
 		var $base = base_0
-		if in_next - $base == Matchfinder.window_size {
-			$tab = Matchfinder.rebase_table($tab)?
-			$base = $base + Matchfinder.window_size
+		if in_next.minus_wrap($base) == Matchfinder.window_size {
+			$tab = Matchfinder.rebase_table($tab)
+			$base = $base.plus_wrap(Matchfinder.window_size)
 		} else {
 		}
 		in_base = $base
-		cur_pos = in_next - in_base
-		cutoff = cur_pos.to_i32_wrap() - 32768
+		cur_pos = in_next.minus_wrap(in_base)
+		cutoff = cur_pos.to_i32_wrap().minus_wrap(32768)
 
 		hash = hash_0
-		next_hash = Matchfinder.lz_hash(U32.from_le_bytes(input, in_next + 1) ?? 0, HtMatchfinder.hash_order)
+		next_hash = Matchfinder.lz_hash(U32.from_le_bytes(input, in_next.plus_wrap(1)) ?? 0, HtMatchfinder.hash_order)
 		seq = U32.from_le_bytes(input, in_next) ?? 0
 
-		slot0 = hash.bitwise_and(0x7FFF) * 2
-		if slot0 + 1 >= List.len($tab) {
+		slot0 = hash.bitwise_and(0x7FFF).times_wrap(2)
+		if slot0.plus_wrap(1) >= List.len($tab) {
 			return Err(CompressBug)
 		} else {
 		}
@@ -83,8 +87,8 @@ HtMatchfinder := [].{
 			match0_at = Matchfinder.match_index(in_base, cur_node0)
 
 			# Push the displaced entry into the second slot.
-			cur_node1 = List.get(tab1, slot0 + 1) ?? 0
-			var $tab2 = match List.set(tab1, slot0 + 1, cur_node0) {
+			cur_node1 = List.get(tab1, slot0.plus_wrap(1)) ?? 0
+			var $tab2 = match List.set(tab1, slot0.plus_wrap(1), cur_node0) {
 				Ok(next) => next
 				Err(_) => return Err(CompressBug)
 			}
@@ -96,8 +100,8 @@ HtMatchfinder := [].{
 				} else {
 					match1_at = Matchfinder.match_index(in_base, cur_node1)
 					if (U32.from_le_bytes(input, match1_at) ?? 0) == seq
-						and (U32.from_le_bytes(input, match1_at + $best_len - 3) ?? 0)
-							== (U32.from_le_bytes(input, in_next + $best_len - 3) ?? 0) {
+						and (U32.from_le_bytes(input, match1_at.plus_wrap($best_len).minus_wrap(3)) ?? 0)
+							== (U32.from_le_bytes(input, in_next.plus_wrap($best_len).minus_wrap(3)) ?? 0) {
 						len = Matchfinder.lz_extend(input, in_next, match1_at, 4, max_len)
 						if len > $best_len {
 							$best_len = len
@@ -124,7 +128,7 @@ HtMatchfinder := [].{
 				in_cur_base: in_base,
 				next_hash,
 				length: $best_len,
-				offset: in_next - $best_match_at,
+				offset: in_next.minus_wrap($best_match_at),
 			})
 		}
 	}
@@ -132,31 +136,41 @@ HtMatchfinder := [].{
 	## Insert `count` positions into the buckets without searching them.
 	skip_bytes : List(I16), U64, U64, List(U8), U64, U64, U64 -> Try(State, [CompressBug])
 	skip_bytes = |tab_0, base_0, hash_0, input, in_next0, in_end, count| {
-		if count + HtMatchfinder.required_nbytes > in_end - in_next0 {
+		# The run ends at `end`, and every hash read the loop makes lies within
+		# `required_nbytes` of it. Bounding the run against the input's length
+		# here, and the bucket table's size once after any slide, lets the
+		# range prover discharge the bounds test on every read and bucket
+		# access in the loop, so each byte pays only for the work itself.
+		end = in_next0.plus_wrap(count)
+		if end.plus_wrap(HtMatchfinder.required_nbytes) > in_end {
 			Ok({ hash_tab: tab_0, in_cur_base: base_0, next_hash: hash_0 })
+		} else if in_end > List.len(input) {
+			Err(CompressBug)
 		} else {
 			var $tab = tab_0
 			var $base = base_0
 			var $in_next = in_next0
-			var $cur_pos = ($in_next - base_0).to_i64_wrap()
+			var $cur_pos = $in_next.minus_wrap(base_0).to_i64_wrap()
 			# One slide covers the whole run, since it is bounded by a window.
-			if $cur_pos + count.to_i64_wrap() - 1 >= Matchfinder.window_size.to_i64_wrap() {
-				$tab = Matchfinder.rebase_table($tab)?
-				$base = $base + Matchfinder.window_size
-				$cur_pos = $cur_pos - Matchfinder.window_size.to_i64_wrap()
+			if $cur_pos.plus_wrap(count.to_i64_wrap()).minus_wrap(1) >= Matchfinder.window_size.to_i64_wrap() {
+				$tab = Matchfinder.rebase_table($tab)
+				$base = $base.plus_wrap(Matchfinder.window_size)
+				$cur_pos = $cur_pos.minus_wrap(Matchfinder.window_size.to_i64_wrap())
+			} else {
+			}
+			if List.len($tab) < HtMatchfinder.table_size {
+				return Err(CompressBug)
 			} else {
 			}
 
+			# Wrapping arithmetic: the run was bounded against the input above and
+			# a bucket index is a masked hash doubled, so nothing here can overflow
+			# and a checked add would only cost a branch per byte.
 			var $hash = hash_0
-			var $remaining = count
-			while $remaining > 0 {
-				slot0 = $hash.bitwise_and(0x7FFF) * 2
-				if slot0 + 1 >= List.len($tab) {
-					return Err(CompressBug)
-				} else {
-				}
+			while $in_next < end {
+				slot0 = $hash.bitwise_and(0x7FFF).times_wrap(2)
 				first = List.get($tab, slot0) ?? 0
-				tab1 = match List.set($tab, slot0 + 1, first) {
+				tab1 = match List.set($tab, slot0.plus_wrap(1), first) {
 					Ok(next) => next
 					Err(_) => return Err(CompressBug)
 				}
@@ -168,7 +182,6 @@ HtMatchfinder := [].{
 				$in_next = $in_next.plus_wrap(1)
 				$hash = Matchfinder.lz_hash(U32.from_le_bytes(input, $in_next) ?? 0, HtMatchfinder.hash_order)
 				$cur_pos = $cur_pos.plus_wrap(1)
-				$remaining = $remaining.minus_wrap(1)
 			}
 			Ok({ hash_tab: $tab, in_cur_base: $base, next_hash: $hash })
 		}
