@@ -557,11 +557,51 @@ CompressLazy := [].{
 					})
 					$litrunlen = 0
 
-					skipped = HcMatchfinder.skip_bytes($mf, $base, $nh3, $nh4, input, $in_next.plus_wrap(1), in_end, $found.length.minus_wrap(1))?
-					$mf = skipped.tab
-					$base = skipped.in_cur_base
-					$nh3 = skipped.next_hash3
-					$nh4 = skipped.next_hash4
+					# Insert the positions the match covers. A run that crosses a window
+					# slide or reaches the input's last bytes takes the general routine;
+					# every other run is inserted here, where the tables and hashes are
+					# already at hand.
+					skip_end = $in_next.plus_wrap($found.length)
+					if in_end < 9
+						or in_end > List.len(input)
+						or skip_end.plus_wrap(5) > in_end
+						or skip_end.minus_wrap($base) > Matchfinder.window_size
+						or List.len($mf) < HcMatchfinder.table_size
+						or $nh3 >= HcMatchfinder.hash3_size
+						or $nh4 >= HcMatchfinder.hash4_size {
+						skipped = HcMatchfinder.skip_bytes($mf, $base, $nh3, $nh4, input, $in_next.plus_wrap(1), in_end, $found.length.minus_wrap(1))?
+						$mf = skipped.tab
+						$base = skipped.in_cur_base
+						$nh3 = skipped.next_hash3
+						$nh4 = skipped.next_hash4
+					} else {
+						# The run ends at least five bytes before the input does; taking
+						# the smaller of the two as the limit states that where the hash
+						# read below can use it.
+						skip_limit = skip_end.min(in_end - 5)
+						var $skip_at = $in_next.plus_wrap(1)
+						while $skip_at < skip_limit {
+							skip_pos = $skip_at.minus_wrap($base)
+							skip_node = skip_pos.plus_wrap(Matchfinder.node_bias).to_u16_wrap()
+							prev_head = List.get($mf, HcMatchfinder.hash4_base.plus_wrap($nh4)) ?? 0
+							$mf = match List.set($mf, HcMatchfinder.hash3_base.plus_wrap($nh3), skip_node) {
+								Ok(next) => next
+								Err(_) => return Err(CompressBug)
+							}
+							$mf = match List.set($mf, skip_pos.bitwise_and(32767), prev_head) {
+								Ok(next) => next
+								Err(_) => return Err(CompressBug)
+							}
+							$mf = match List.set($mf, HcMatchfinder.hash4_base.plus_wrap($nh4), skip_node) {
+								Ok(next) => next
+								Err(_) => return Err(CompressBug)
+							}
+							$skip_at = $skip_at.plus_wrap(1)
+							skip_hashseq = U32.from_le_bytes(input, $skip_at) ?? 0
+							$nh3 = Matchfinder.lz_hash(skip_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
+							$nh4 = Matchfinder.lz_hash(skip_hashseq, HcMatchfinder.hash4_order)
+						}
+					}
 					$in_next = $in_next.plus_wrap($found.length)
 				} else {
 				}
