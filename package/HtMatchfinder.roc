@@ -175,8 +175,13 @@ HtMatchfinder := [].{
 			# Wrapping arithmetic: the run was bounded against the input above and
 			# a bucket index is a masked hash doubled, so nothing here can overflow
 			# and a checked add would only cost a branch per byte.
+			# The run ends at least `required_nbytes` before the input does;
+			# taking the smaller of the two as the limit states that where the
+			# hash read below can use it.
+			last_start = in_end - HtMatchfinder.required_nbytes
+			limit = if end < last_start { end } else { last_start }
 			var $hash = hash_0
-			while $in_next < end {
+			while $in_next < limit {
 				slot0 = $hash.bitwise_and(0x7FFF).times_wrap(2)
 				first = List.get($tab, slot0) ?? 0
 				tab1 = match List.set($tab, slot0.plus_wrap(1), first) {
