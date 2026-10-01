@@ -258,6 +258,9 @@ CompressLazy := [].{
 	compress_greedy : List(U8), Params -> Try(List(U8), [CompressBug])
 	compress_greedy = |input, params| {
 		in_end = List.len(input)
+		# Positions before this one have a full-length match in reach, so the
+		# search there needs no shortening.
+		full_search_end = if in_end >= DeflateTables.max_match_len { in_end - (DeflateTables.max_match_len - 1) } else { 0 }
 		static = CompressLazy.build_static_codes(0)?
 		var $s_litlen_lens = static.litlen_lens
 		var $s_litlen_codewords = static.litlen_codewords
@@ -335,161 +338,194 @@ CompressLazy := [].{
 					$base = $base.plus_wrap(Matchfinder.window_size)
 				} else {
 				}
+				# Literals are scanned in an inner loop that runs until a match is
+				# found or the cursor reaches the next position needing one of the
+				# checks above or below: the window slide, the shortened search near
+				# the input end, or the block end. One compare stands in for all three.
+				scan_end = in_max_block_end.min($base.plus_wrap(Matchfinder.window_size)).min(full_search_end)
 				var $found = { length: min_len.minus_wrap(1), offset: 0.U64 }
-				if $max_len < 5 {
-					# Not enough bytes left to read the next position's hash sequence.
-				} else {
-					cur_pos = $in_next.minus_wrap($base)
-					cur_node3 = List.get($mf, HcMatchfinder.hash3_base.plus_wrap($nh3)) ?? 0
-					cur_node4 = List.get($mf, HcMatchfinder.hash4_base.plus_wrap($nh4)) ?? 0
-					pos = (cur_pos.plus_wrap(Matchfinder.node_bias)).to_u16_wrap()
-					$mf = match List.set($mf, HcMatchfinder.hash3_base.plus_wrap($nh3), pos) {
-						Ok(next) => next
-						Err(_) => return Err(CompressBug)
-					}
-					$mf = match List.set($mf, HcMatchfinder.hash4_base.plus_wrap($nh4), pos) {
-						Ok(next) => next
-						Err(_) => return Err(CompressBug)
-					}
-					$mf = match List.set($mf, cur_pos, cur_node4) {
-						Ok(next) => next
-						Err(_) => return Err(CompressBug)
-					}
-					next_hashseq = U32.from_le_bytes(input, $in_next.plus_wrap(1)) ?? 0
-					$nh3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
-					$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
-					# The hash-chain search, written out here rather than called: it is
-					# the greedy loop's whole body, and as a call it returned its match
-					# through memory and spilled the loop's state around itself.
-					# The chain region is one window long, so every masked chain index is
-					# in range, and a length guard here would let each chain read's bounds
-					# test fold away. It is deliberately absent: the test costs nothing on
-					# the walk's critical path, while its survival keeps the masked index
-					# as a separate value that the load then scales for free. Folded, the
-					# mask and scale merge into one instruction ahead of the load, which
-					# is a cycle more on every step of the chain.
-					# A node at or below the current position, in the biased space the
-					# tables use, is out of the window.
+				var $scanning = True
+				while $scanning {
+					$found = { length: min_len.minus_wrap(1), offset: 0.U64 }
+					if $max_len < 5 {
+						# Not enough bytes left to read the next position's hash sequence.
+					} else {
+						cur_pos = $in_next.minus_wrap($base)
+						cur_node3 = List.get($mf, HcMatchfinder.hash3_base.plus_wrap($nh3)) ?? 0
+						cur_node4 = List.get($mf, HcMatchfinder.hash4_base.plus_wrap($nh4)) ?? 0
+						pos = (cur_pos.plus_wrap(Matchfinder.node_bias)).to_u16_wrap()
+						$mf = match List.set($mf, HcMatchfinder.hash3_base.plus_wrap($nh3), pos) {
+							Ok(next) => next
+							Err(_) => return Err(CompressBug)
+						}
+						$mf = match List.set($mf, HcMatchfinder.hash4_base.plus_wrap($nh4), pos) {
+							Ok(next) => next
+							Err(_) => return Err(CompressBug)
+						}
+						$mf = match List.set($mf, cur_pos, cur_node4) {
+							Ok(next) => next
+							Err(_) => return Err(CompressBug)
+						}
+						next_hashseq = U32.from_le_bytes(input, $in_next.plus_wrap(1)) ?? 0
+						$nh3 = Matchfinder.lz_hash(next_hashseq.bitwise_and(0xFFFFFF), HcMatchfinder.hash3_order)
+						$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
+						# The hash-chain search, written out here rather than called: it is
+						# the greedy loop's whole body, and as a call it returned its match
+						# through memory and spilled the loop's state around itself.
+						# The chain region is one window long, so every masked chain index is
+						# in range, and a length guard here would let each chain read's bounds
+						# test fold away. It is deliberately absent: the test costs nothing on
+						# the walk's critical path, while its survival keeps the masked index
+						# as a separate value that the load then scales for free. Folded, the
+						# mask and scale merge into one instruction ahead of the load, which
+						# is a cycle more on every step of the chain.
+						# A node at or below the current position, in the biased space the
+						# tables use, is out of the window.
 
-					var $best_len = min_len.minus_wrap(1)
-					var $best_match_at = $in_next
+						var $best_len = min_len.minus_wrap(1)
+						var $best_match_at = $in_next
 
-					seq4 = U32.from_le_bytes(input, $in_next) ?? 0
-					var $node4 = cur_node4
-					var $depth = params.max_search_depth
-					var $done = 0.U64
+						seq4 = U32.from_le_bytes(input, $in_next) ?? 0
+						var $node4 = cur_node4
+						var $depth = params.max_search_depth
+						var $done = 0.U64
 
-					if $best_len < 4 {
-						if cur_node3.to_u64() <= cur_pos {
-							$done = 1
-						} else {
-							if $best_len < 3 {
-								match_at = Matchfinder.node_index($base, cur_node3)
-								if (U32.from_le_bytes(input, match_at) ?? 0).bitwise_and(0xFFFFFF)
-									== seq4.bitwise_and(0xFFFFFF) {
-									$best_len = 3
-									$best_match_at = match_at
-								} else {
-								}
-							} else {
-							}
-
-							if $node4.to_u64() <= cur_pos {
+						if $best_len < 4 {
+							if cur_node3.to_u64() <= cur_pos {
 								$done = 1
 							} else {
-								# Walk the chain until four bytes agree.
-								var $found_at = 0.U64
-								while True {
-									match_at = Matchfinder.node_index($base, $node4)
-									if (U32.from_le_bytes(input, match_at) ?? 0) == seq4 {
-										$found_at = match_at
-										break
+								if $best_len < 3 {
+									match_at = Matchfinder.node_index($base, cur_node3)
+									if (U32.from_le_bytes(input, match_at) ?? 0).bitwise_and(0xFFFFFF)
+										== seq4.bitwise_and(0xFFFFFF) {
+										$best_len = 3
+										$best_match_at = match_at
 									} else {
 									}
-									$node4 = List.get($mf, $node4.to_u64().bitwise_and(32767)) ?? 0
-									$depth = $depth.minus_wrap(1)
-									if $node4.to_u64() <= cur_pos or $depth == 0 {
-										$done = 1
-										break
-									} else {
-									}
+								} else {
 								}
 
-								if $done == 0 {
-									$best_match_at = $found_at
-									$best_len = Matchfinder.lz_extend(input, $in_next, $found_at, 4, $max_len)
-									if $best_len >= $nice_len {
-										$done = 1
-									} else {
+								if $node4.to_u64() <= cur_pos {
+									$done = 1
+								} else {
+									# Walk the chain until four bytes agree.
+									var $found_at = 0.U64
+									while True {
+										match_at = Matchfinder.node_index($base, $node4)
+										if (U32.from_le_bytes(input, match_at) ?? 0) == seq4 {
+											$found_at = match_at
+											break
+										} else {
+										}
 										$node4 = List.get($mf, $node4.to_u64().bitwise_and(32767)) ?? 0
 										$depth = $depth.minus_wrap(1)
 										if $node4.to_u64() <= cur_pos or $depth == 0 {
 											$done = 1
+											break
 										} else {
 										}
 									}
-								} else {
+
+									if $done == 0 {
+										$best_match_at = $found_at
+										$best_len = Matchfinder.lz_extend(input, $in_next, $found_at, 4, $max_len)
+										if $best_len >= $nice_len {
+											$done = 1
+										} else {
+											$node4 = List.get($mf, $node4.to_u64().bitwise_and(32767)) ?? 0
+											$depth = $depth.minus_wrap(1)
+											if $node4.to_u64() <= cur_pos or $depth == 0 {
+												$done = 1
+											} else {
+											}
+										}
+									} else {
+									}
 								}
 							}
-						}
-					} else {
-						if $node4.to_u64() <= cur_pos or $best_len >= $nice_len {
-							$done = 1
 						} else {
-						}
-					}
-
-					# Now look only for matches longer than the one in hand.
-					while $done == 0 {
-						var $cand_at = 0.U64
-						while True {
-							match_at = Matchfinder.node_index($base, $node4)
-							# The four bytes ending just past the current best length
-							# are what a longer match must agree on, so check them
-							# before anything else.
-							# Wrapping arithmetic: positions are far below 2^63, and a checked
-							# add or subtract would put an overflow branch on every candidate.
-							if (U32.from_le_bytes(input, match_at.plus_wrap($best_len).minus_wrap(3)) ?? 0)
-								== (U32.from_le_bytes(input, $in_next.plus_wrap($best_len).minus_wrap(3)) ?? 0)
-								and (U32.from_le_bytes(input, match_at) ?? 0) == seq4 {
-								$cand_at = match_at
-								break
-							} else {
-							}
-							$node4 = List.get($mf, $node4.to_u64().bitwise_and(32767)) ?? 0
-							$depth = $depth.minus_wrap(1)
-							if $node4.to_u64() <= cur_pos or $depth == 0 {
+							if $node4.to_u64() <= cur_pos or $best_len >= $nice_len {
 								$done = 1
-								break
 							} else {
 							}
 						}
 
-						if $done == 0 {
-							len = Matchfinder.lz_extend(input, $in_next, $cand_at, 4, $max_len)
-							if len > $best_len {
-								$best_len = len
-								$best_match_at = $cand_at
-								if $best_len >= $nice_len {
-									$done = 1
+						# Now look only for matches longer than the one in hand.
+						while $done == 0 {
+							var $cand_at = 0.U64
+							while True {
+								match_at = Matchfinder.node_index($base, $node4)
+								# The four bytes ending just past the current best length
+								# are what a longer match must agree on, so check them
+								# before anything else.
+								# Wrapping arithmetic: positions are far below 2^63, and a checked
+								# add or subtract would put an overflow branch on every candidate.
+								if (U32.from_le_bytes(input, match_at.plus_wrap($best_len).minus_wrap(3)) ?? 0)
+									== (U32.from_le_bytes(input, $in_next.plus_wrap($best_len).minus_wrap(3)) ?? 0)
+									and (U32.from_le_bytes(input, match_at) ?? 0) == seq4 {
+									$cand_at = match_at
+									break
 								} else {
 								}
-							} else {
-							}
-							if $done == 0 {
 								$node4 = List.get($mf, $node4.to_u64().bitwise_and(32767)) ?? 0
 								$depth = $depth.minus_wrap(1)
 								if $node4.to_u64() <= cur_pos or $depth == 0 {
 									$done = 1
+									break
+								} else {
+								}
+							}
+
+							if $done == 0 {
+								len = Matchfinder.lz_extend(input, $in_next, $cand_at, 4, $max_len)
+								if len > $best_len {
+									$best_len = len
+									$best_match_at = $cand_at
+									if $best_len >= $nice_len {
+										$done = 1
+									} else {
+									}
+								} else {
+								}
+								if $done == 0 {
+									$node4 = List.get($mf, $node4.to_u64().bitwise_and(32767)) ?? 0
+									$depth = $depth.minus_wrap(1)
+									if $node4.to_u64() <= cur_pos or $depth == 0 {
+										$done = 1
+									} else {
+									}
 								} else {
 								}
 							} else {
 							}
+						}
+
+						$found = { length: $best_len, offset: $in_next.minus_wrap($best_match_at) }
+					}
+					if $found.length >= min_len
+						and ($found.length > DeflateTables.min_match_len or $found.offset <= 4096) {
+						$scanning = False
+					} else {
+						lit = (List.get(input, $in_next) ?? 0).to_u64()
+						lit_count = (List.get($freqs_litlen, lit) ?? 0).plus_wrap(1)
+						$freqs_litlen = match List.set($freqs_litlen, lit, lit_count) {
+							Ok(next) => next
+							Err(_) => return Err(CompressBug)
+						}
+						obs = lit.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit.bitwise_and(1))
+						obs_count = (List.get($new_observations, obs) ?? 0).plus_wrap(1)
+						$new_observations = match List.set($new_observations, obs, obs_count) {
+							Ok(next) => next
+							Err(_) => return Err(CompressBug)
+						}
+						$num_new_observations = $num_new_observations.plus_wrap(1)
+						$litrunlen = $litrunlen.plus_wrap(1)
+						$in_next = $in_next.plus_wrap(1)
+						if $in_next >= scan_end or $num_new_observations >= CompressLazy.observations_per_block_check {
+							$scanning = False
 						} else {
 						}
 					}
-
-					$found = { length: $best_len, offset: $in_next.minus_wrap($best_match_at) }
 				}
 
 				if $found.length >= min_len
@@ -528,21 +564,6 @@ CompressLazy := [].{
 					$nh4 = skipped.next_hash4
 					$in_next = $in_next.plus_wrap($found.length)
 				} else {
-					lit = (List.get(input, $in_next) ?? 0).to_u64()
-					lit_count = (List.get($freqs_litlen, lit) ?? 0).plus_wrap(1)
-					$freqs_litlen = match List.set($freqs_litlen, lit, lit_count) {
-						Ok(next) => next
-						Err(_) => return Err(CompressBug)
-					}
-					obs = lit.shr_zf_wrap(5).bitwise_and(0x6).bitwise_or(lit.bitwise_and(1))
-					obs_count = (List.get($new_observations, obs) ?? 0).plus_wrap(1)
-					$new_observations = match List.set($new_observations, obs, obs_count) {
-						Ok(next) => next
-						Err(_) => return Err(CompressBug)
-					}
-					$num_new_observations = $num_new_observations.plus_wrap(1)
-					$litrunlen = $litrunlen.plus_wrap(1)
-					$in_next = $in_next.plus_wrap(1)
 				}
 
 				if $in_next >= in_max_block_end or List.len($seqs) >= CompressLazy.seq_store_length {
