@@ -790,15 +790,15 @@ Inflate := [].{
 			var $saved_bitbuf = $bitbuf
 			$bitbuf = $bitbuf.shr_zf_wrap($entry.to_u8_wrap())
 			$bitsleft = $bitsleft.minus_wrap($entry.to_u64())
-			if $entry.bitwise_and(Inflate.huffdec_subtable_pointer) != 0 {
-				sub_mask = 1.U64.shl_wrap($entry.shr_zf_wrap(8).bitwise_and(63).to_u8_wrap()) - 1
-				sub_index = $entry.shr_zf_wrap(16).to_u64() + $bitbuf.bitwise_and(sub_mask)
-				$entry = (List.get(litlen_table, sub_index) ?? 0)
-				$saved_bitbuf = $bitbuf
-				$bitbuf = $bitbuf.shr_zf_wrap($entry.to_u8_wrap())
-				$bitsleft = $bitsleft.minus_wrap($entry.to_u64())
-			} else {}
 
+			# Literals are tested for first, as the common case, and only from
+			# the main table: an entry that is neither a literal nor a plain
+			# length is exceptional, a subtable pointer or the end of the block,
+			# and is sorted out after the literal tests have failed. That keeps
+			# every fast literal to at most a table index of bits, which is what
+			# lets each next entry below be looked up before its refill: enough
+			# bits are always left for the index, and a refill only adds bits
+			# above them, so the lookup never waits on the refill.
 			var $pending = 1.U64
 			if $entry.bitwise_and(Inflate.huffdec_literal) != 0 {
 				$out = List.append($out, $entry.shr_zf_wrap(16).to_u8_wrap())
@@ -806,88 +806,102 @@ Inflate := [].{
 				$saved_bitbuf = $bitbuf
 				$bitbuf = $bitbuf.shr_zf_wrap($entry.to_u8_wrap())
 				$bitsleft = $bitsleft.minus_wrap($entry.to_u64())
-				if $entry.bitwise_and(Inflate.huffdec_subtable_pointer) != 0 {
-					sm2 = 1.U64.shl_wrap($entry.shr_zf_wrap(8).bitwise_and(63).to_u8_wrap()) - 1
-					si2 = $entry.shr_zf_wrap(16).to_u64() + $bitbuf.bitwise_and(sm2)
-					$entry = (List.get(litlen_table, si2) ?? 0)
-					$saved_bitbuf = $bitbuf
-					$bitbuf = $bitbuf.shr_zf_wrap($entry.to_u8_wrap())
-					$bitsleft = $bitsleft.minus_wrap($entry.to_u64())
-				} else {}
 				if $entry.bitwise_and(Inflate.huffdec_literal) != 0 {
 					$out = List.append($out, $entry.shr_zf_wrap(16).to_u8_wrap())
 					$entry = (List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0)
 					$saved_bitbuf = $bitbuf
 					$bitbuf = $bitbuf.shr_zf_wrap($entry.to_u8_wrap())
 					$bitsleft = $bitsleft.minus_wrap($entry.to_u64())
-					if $entry.bitwise_and(Inflate.huffdec_subtable_pointer) != 0 {
-						sm3 = 1.U64.shl_wrap($entry.shr_zf_wrap(8).bitwise_and(63).to_u8_wrap()) - 1
-						si3 = $entry.shr_zf_wrap(16).to_u64() + $bitbuf.bitwise_and(sm3)
-						$entry = (List.get(litlen_table, si3) ?? 0)
-						$saved_bitbuf = $bitbuf
-						$bitbuf = $bitbuf.shr_zf_wrap($entry.to_u8_wrap())
-						$bitsleft = $bitsleft.minus_wrap($entry.to_u64())
-					} else {}
 					if $entry.bitwise_and(Inflate.huffdec_literal) != 0 {
 						$out = List.append($out, $entry.shr_zf_wrap(16).to_u8_wrap())
+						$entry = (List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0)
 						word3 = U64.from_le_bytes(input, $in_next) ?? 0
 						$bitbuf = $bitbuf.bitwise_or(word3.shl_wrap($bitsleft.to_u8_wrap()))
 						$in_next = $in_next + 7 - $bitsleft.shr_zf_wrap(3).bitwise_and(7)
 						$bitsleft = $bitsleft.bitwise_or(56)
-						$entry = (List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0)
 						$pending = 0
 					} else {}
 				} else {}
 			} else {}
 
-			if $pending == 1 {
+			if $pending == 1 and $entry.bitwise_and(Inflate.huffdec_exceptional) != 0 {
 				if $entry.bitwise_and(Inflate.huffdec_end_of_block) != 0 {
 					$done = 1
+					$pending = 0
 				} else {
-					len_codeword_bits = $entry.shr_zf_wrap(8).bitwise_and(255).to_u8_wrap()
-					len_mask = 1.U64.shl_wrap($entry.to_u8_wrap()) - 1
-					length = $entry.shr_zf_wrap(16).to_u64()
-						+ $saved_bitbuf.bitwise_and(len_mask).shr_zf_wrap(len_codeword_bits)
+					sub_mask = 1.U64.shl_wrap($entry.shr_zf_wrap(8).bitwise_and(63).to_u8_wrap()) - 1
+					sub_index = $entry.shr_zf_wrap(16).to_u64() + $bitbuf.bitwise_and(sub_mask)
+					$entry = (List.get(litlen_table, sub_index) ?? 0)
+					$saved_bitbuf = $bitbuf
+					$bitbuf = $bitbuf.shr_zf_wrap($entry.to_u8_wrap())
+					$bitsleft = $bitsleft.minus_wrap($entry.to_u64())
+					if $entry.bitwise_and(Inflate.huffdec_literal) != 0 {
+						$out = List.append($out, $entry.shr_zf_wrap(16).to_u8_wrap())
+						$entry = (List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0)
+						word_s = U64.from_le_bytes(input, $in_next) ?? 0
+						$bitbuf = $bitbuf.bitwise_or(word_s.shl_wrap($bitsleft.to_u8_wrap()))
+						$in_next = $in_next + 7 - $bitsleft.shr_zf_wrap(3).bitwise_and(7)
+						$bitsleft = $bitsleft.bitwise_or(56)
+						$pending = 0
+					} else if $entry.bitwise_and(Inflate.huffdec_end_of_block) != 0 {
+						$done = 1
+						$pending = 0
+					} else {}
+				}
+			} else {}
 
-					if $bitsleft.bitwise_and(255) < 28 {
-						word_r = U64.from_le_bytes(input, $in_next) ?? 0
-						$bitbuf = $bitbuf.bitwise_or(word_r.shl_wrap($bitsleft.to_u8_wrap()))
+			if $pending == 1 {
+				len_codeword_bits = $entry.shr_zf_wrap(8).bitwise_and(255).to_u8_wrap()
+				len_mask = 1.U64.shl_wrap($entry.to_u8_wrap()) - 1
+				length = $entry.shr_zf_wrap(16).to_u64()
+					+ $saved_bitbuf.bitwise_and(len_mask).shr_zf_wrap(len_codeword_bits)
+
+				# The offset entry is looked up from the bits in hand; whether a
+				# refill is needed before its extra bits is decided afterwards. The
+				# thresholds leave a table index of bits after the offset, for the
+				# preload below.
+				var $off_entry = (List.get(offset_table, $bitbuf.bitwise_and(255)) ?? 0)
+				if $off_entry.bitwise_and(Inflate.huffdec_exceptional) != 0 {
+					if $bitsleft.bitwise_and(255) < 38 {
+						word_x = U64.from_le_bytes(input, $in_next) ?? 0
+						$bitbuf = $bitbuf.bitwise_or(word_x.shl_wrap($bitsleft.to_u8_wrap()))
 						$in_next = $in_next + 7 - $bitsleft.shr_zf_wrap(3).bitwise_and(7)
 						$bitsleft = $bitsleft.bitwise_or(56)
 					} else {}
-
-					var $off_entry = (List.get(offset_table, $bitbuf.bitwise_and(255)) ?? 0)
-					if $off_entry.bitwise_and(Inflate.huffdec_exceptional) != 0 {
-						$bitbuf = $bitbuf.shr_zf_wrap(8)
-						$bitsleft = $bitsleft.minus_wrap(8)
-						osm = 1.U64.shl_wrap($off_entry.shr_zf_wrap(8).bitwise_and(63).to_u8_wrap()) - 1
-						osi = $off_entry.shr_zf_wrap(16).to_u64() + $bitbuf.bitwise_and(osm)
-						$off_entry = (List.get(offset_table, osi) ?? 0)
-					} else {}
-					off_codeword_bits = $off_entry.shr_zf_wrap(8).bitwise_and(255).to_u8_wrap()
-					off_mask = 1.U64.shl_wrap($off_entry.to_u8_wrap()) - 1
-					offset = $off_entry.shr_zf_wrap(16).to_u64()
-						+ $bitbuf.bitwise_and(off_mask).shr_zf_wrap(off_codeword_bits)
-					$bitbuf = $bitbuf.shr_zf_wrap($off_entry.to_u8_wrap())
-					$bitsleft = $bitsleft.minus_wrap($off_entry.to_u64())
-
-					out_len = List.len($out)
-					if offset > out_len or offset == 0 {
-						return Err(CorruptData)
-					} else {}
-
-					# Refill and preload the next symbol before the copy runs,
-					# so its table-load latency hides under the copy's stores.
-					word2 = U64.from_le_bytes(input, $in_next) ?? 0
-					$bitbuf = $bitbuf.bitwise_or(word2.shl_wrap($bitsleft.to_u8_wrap()))
+					$bitbuf = $bitbuf.shr_zf_wrap(8)
+					$bitsleft = $bitsleft.minus_wrap(8)
+					osm = 1.U64.shl_wrap($off_entry.shr_zf_wrap(8).bitwise_and(63).to_u8_wrap()) - 1
+					osi = $off_entry.shr_zf_wrap(16).to_u64() + $bitbuf.bitwise_and(osm)
+					$off_entry = (List.get(offset_table, osi) ?? 0)
+				} else if $bitsleft.bitwise_and(255) < 31 {
+					word_r = U64.from_le_bytes(input, $in_next) ?? 0
+					$bitbuf = $bitbuf.bitwise_or(word_r.shl_wrap($bitsleft.to_u8_wrap()))
 					$in_next = $in_next + 7 - $bitsleft.shr_zf_wrap(3).bitwise_and(7)
 					$bitsleft = $bitsleft.bitwise_or(56)
-					$entry = (List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0)
+				} else {}
+				off_codeword_bits = $off_entry.shr_zf_wrap(8).bitwise_and(255).to_u8_wrap()
+				off_mask = 1.U64.shl_wrap($off_entry.to_u8_wrap()) - 1
+				offset = $off_entry.shr_zf_wrap(16).to_u64()
+					+ $bitbuf.bitwise_and(off_mask).shr_zf_wrap(off_codeword_bits)
+				$bitbuf = $bitbuf.shr_zf_wrap($off_entry.to_u8_wrap())
+				$bitsleft = $bitsleft.minus_wrap($off_entry.to_u64())
 
-					$out = match List.append_range_within($out, out_len - offset, length) {
-						Ok(new_out) => new_out
-						Err(_) => return Err(CorruptData)
-					}
+				out_len = List.len($out)
+				if offset > out_len or offset == 0 {
+					return Err(CorruptData)
+				} else {}
+
+				# Preload the next symbol and refill before the copy runs, so
+				# their latency hides under the copy's stores.
+				$entry = (List.get(litlen_table, $bitbuf.bitwise_and(litlen_mask)) ?? 0)
+				word2 = U64.from_le_bytes(input, $in_next) ?? 0
+				$bitbuf = $bitbuf.bitwise_or(word2.shl_wrap($bitsleft.to_u8_wrap()))
+				$in_next = $in_next + 7 - $bitsleft.shr_zf_wrap(3).bitwise_and(7)
+				$bitsleft = $bitsleft.bitwise_or(56)
+
+				$out = match List.append_range_within($out, out_len - offset, length) {
+					Ok(new_out) => new_out
+					Err(_) => return Err(CorruptData)
 				}
 			} else {}
 		}
