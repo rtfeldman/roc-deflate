@@ -371,8 +371,8 @@ CompressLazy := [].{
 						$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
 						# Both buckets the next position reads are known now, a whole search
 						# before they are needed, so start bringing them into the cache.
-						List.prefetch($mf, HcMatchfinder.hash3_base.plus_wrap($nh3))
-						List.prefetch($mf, HcMatchfinder.hash4_base.plus_wrap($nh4))
+						$mf = List.prefetched($mf, HcMatchfinder.hash3_base.plus_wrap($nh3))
+						$mf = List.prefetched($mf, HcMatchfinder.hash4_base.plus_wrap($nh4))
 						# The hash-chain search, written out here rather than called: it is
 						# the greedy loop's whole body, and as a call it returned its match
 						# through memory and spilled the loop's state around itself.
@@ -607,8 +607,8 @@ CompressLazy := [].{
 						}
 					}
 					$in_next = $in_next.plus_wrap($found.length)
-					List.prefetch($mf, HcMatchfinder.hash3_base.plus_wrap($nh3))
-					List.prefetch($mf, HcMatchfinder.hash4_base.plus_wrap($nh4))
+					$mf = List.prefetched($mf, HcMatchfinder.hash3_base.plus_wrap($nh3))
+					$mf = List.prefetched($mf, HcMatchfinder.hash4_base.plus_wrap($nh4))
 				} else {
 				}
 
@@ -819,8 +819,8 @@ CompressLazy := [].{
 					$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
 					# Both buckets the next position reads are known now, a whole search
 					# before they are needed, so start bringing them into the cache.
-					List.prefetch($mf, HcMatchfinder.hash3_base.plus_wrap($nh3))
-					List.prefetch($mf, HcMatchfinder.hash4_base.plus_wrap($nh4))
+					$mf = List.prefetched($mf, HcMatchfinder.hash3_base.plus_wrap($nh3))
+					$mf = List.prefetched($mf, HcMatchfinder.hash4_base.plus_wrap($nh4))
 					# The hash-chain search, written out here rather than called, so the
 					# loop's state stays in registers across it.
 					# The chain region is one window long, so every masked chain index is
@@ -1030,8 +1030,8 @@ CompressLazy := [].{
 								$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
 								# Both buckets the next position reads are known now, a whole search
 								# before they are needed, so start bringing them into the cache.
-								List.prefetch($mf, HcMatchfinder.hash3_base.plus_wrap($nh3))
-								List.prefetch($mf, HcMatchfinder.hash4_base.plus_wrap($nh4))
+								$mf = List.prefetched($mf, HcMatchfinder.hash3_base.plus_wrap($nh3))
+								$mf = List.prefetched($mf, HcMatchfinder.hash4_base.plus_wrap($nh4))
 								# The hash-chain search, written out here rather than called, so the
 								# loop's state stays in registers across it.
 								# The chain region is one window long, so every masked chain index is
@@ -1230,8 +1230,8 @@ CompressLazy := [].{
 									$nh4 = Matchfinder.lz_hash(next_hashseq, HcMatchfinder.hash4_order)
 									# Both buckets the next position reads are known now, a whole search
 									# before they are needed, so start bringing them into the cache.
-									List.prefetch($mf, HcMatchfinder.hash3_base.plus_wrap($nh3))
-									List.prefetch($mf, HcMatchfinder.hash4_base.plus_wrap($nh4))
+									$mf = List.prefetched($mf, HcMatchfinder.hash3_base.plus_wrap($nh3))
+									$mf = List.prefetched($mf, HcMatchfinder.hash4_base.plus_wrap($nh4))
 									# The hash-chain search, written out here rather than called, so the
 									# loop's state stays in registers across it.
 									# The chain region is one window long, so every masked chain index is
@@ -1481,8 +1481,8 @@ CompressLazy := [].{
 									}
 								}
 								$in_next = $in_next.plus_wrap($skip_after)
-								List.prefetch($mf, HcMatchfinder.hash3_base.plus_wrap($nh3))
-								List.prefetch($mf, HcMatchfinder.hash4_base.plus_wrap($nh4))
+								$mf = List.prefetched($mf, HcMatchfinder.hash3_base.plus_wrap($nh3))
+								$mf = List.prefetched($mf, HcMatchfinder.hash4_base.plus_wrap($nh4))
 							} else {
 							}
 							$matching = 0
